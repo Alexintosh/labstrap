@@ -20,7 +20,7 @@
 - name: Install openclaw CLI (non-interactive)
   ansible.builtin.shell: |
     set -euo pipefail
-    curl --proto '=https' --tlsv1.2 -fsSL https://openclaw.ai/install-cli.sh | bash -s -- --prefix "${HOME}/.openclaw" --version "{{ openclaw.version | default('latest') }}" --no-onboard
+    curl --proto '=https' --tlsv1.2 -fsSL https://openclaw.ai/install-cli.sh | bash -s -- --prefix "${HOME}/.openclaw" --version "{{ openclaw.version | default('latest') }}" --set-npm-prefix --no-onboard
   args:
     executable: /bin/bash
   when: not openclaw_user_binary.stat.exists and not openclaw_npm_binary.stat.exists
@@ -28,25 +28,33 @@
   environment:
     HOME: "{{ labstrap_user_home }}"
 
-- name: Ensure openclaw bin path is exported in .zshrc
+- name: Ensure openclaw bin path is exported in shell rc files
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export PATH="$HOME/.openclaw/bin:$PATH"'
     state: present
     create: true
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
 
-- name: Ensure local user bin path is exported in .zshrc for openclaw
+- name: Ensure local user bin path is exported in shell rc files for openclaw
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export PATH="$HOME/.local/bin:$PATH"'
     state: present
     create: true
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
 
 - name: Ensure openclaw wrapper exists in ~/.local/bin
   ansible.builtin.copy:
@@ -60,3 +68,20 @@
         exec "$HOME/.openclaw/bin/openclaw" "$@"
       fi
       exec "$HOME/.npm-global/bin/openclaw" "$@"
+
+- name: Verify openclaw binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.openclaw/bin/openclaw"
+  register: openclaw_installed_binary
+
+- name: Verify npm-global openclaw binary exists after install
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.npm-global/bin/openclaw"
+  register: openclaw_npm_binary_after
+
+- name: Fail when openclaw binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      OpenClaw installation finished without producing {{ labstrap_user_home }}/.openclaw/bin/openclaw.
+      Check installer output and rerun: sudo labstrap extras openclaw
+  when: not openclaw_installed_binary.stat.exists and not openclaw_npm_binary_after.stat.exists

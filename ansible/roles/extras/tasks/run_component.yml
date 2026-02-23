@@ -1,0 +1,39 @@
+---
+- name: Execute extras component {{ extras_component_name }}
+  block:
+    - name: Include extras component task file {{ extras_component_name }}
+      ansible.builtin.include_tasks: "{{ extras_component_task_file }}"
+  rescue:
+    - name: Capture failure reason for extras component {{ extras_component_name }}
+      ansible.builtin.set_fact:
+        extras_failed_components: >-
+          {{
+            extras_failed_components + [
+              {
+                'name': extras_component_name,
+                'reason': (
+                  ansible_failed_result.msg
+                  | default(ansible_failed_result.stderr
+                  | default(ansible_failed_result.stdout
+                  | default('unknown error')))
+                  | regex_replace('\\s+', ' ')
+                  | trim
+                )
+              }
+            ]
+          }}
+
+    - name: Log extras component failure {{ extras_component_name }}
+      ansible.builtin.debug:
+        msg: >-
+          Component '{{ extras_component_name }}' failed but execution will continue.
+          Reason: {{
+            (
+              ansible_failed_result.msg
+              | default(ansible_failed_result.stderr
+              | default(ansible_failed_result.stdout
+              | default('unknown error')))
+              | regex_replace('\\s+', ' ')
+              | trim
+            )
+          }}

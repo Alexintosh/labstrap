@@ -2,7 +2,10 @@
 - name: Ensure package dependencies for whisper are present
   ansible.builtin.apt:
     name:
+      - build-essential
       - ffmpeg
+      - python3-pip
+      - python3-dev
       - python3-venv
     state: present
     update_cache: true
@@ -14,6 +17,19 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0755"
+
+- name: Ensure pip tooling is up to date inside whisper virtualenv
+  ansible.builtin.pip:
+    name:
+      - pip
+      - setuptools
+      - wheel
+    state: present
+    virtualenv: "{{ labstrap_user_home }}/.venvs/whisper"
+    virtualenv_command: python3 -m venv
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
 
 - name: Install openai-whisper in dedicated virtualenv
   ansible.builtin.pip:
@@ -31,3 +47,33 @@
     dest: /usr/local/bin/whisper
     state: link
     force: true
+
+- name: Ensure local user bin directory exists for whisper wrapper
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Ensure whisper wrapper exists in local user bin
+  ansible.builtin.copy:
+    dest: "{{ labstrap_user_home }}/.local/bin/whisper"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      exec "$HOME/.venvs/whisper/bin/whisper" "$@"
+
+- name: Verify whisper binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.venvs/whisper/bin/whisper"
+  register: whisper_binary
+
+- name: Fail when whisper binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      Whisper installation finished without producing {{ labstrap_user_home }}/.venvs/whisper/bin/whisper.
+      Check pip output and rerun: sudo labstrap extras whisper
+  when: not whisper_binary.stat.exists

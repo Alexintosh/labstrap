@@ -2,9 +2,11 @@
 - name: Ensure system dependencies for camoufox are present
   ansible.builtin.apt:
     name:
+      - build-essential
       - libgtk-3-0
       - libx11-xcb1
       - libasound2
+      - python3-pip
       - python3-venv
     state: present
     update_cache: true
@@ -16,6 +18,19 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0755"
+
+- name: Ensure pip tooling is up to date inside camoufox virtualenv
+  ansible.builtin.pip:
+    name:
+      - pip
+      - setuptools
+      - wheel
+    state: present
+    virtualenv: "{{ labstrap_user_home }}/.venvs/camoufox"
+    virtualenv_command: python3 -m venv
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
 
 - name: Install camoufox in dedicated virtualenv
   ansible.builtin.pip:
@@ -39,13 +54,17 @@
 
 - name: Ensure local user bin path is exported in .zshrc for camoufox
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export PATH="$HOME/.local/bin:$PATH"'
     state: present
     create: true
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
 
 - name: Fetch camoufox browser assets when missing
   ansible.builtin.shell: |
@@ -63,3 +82,18 @@
   become_user: "{{ user }}"
   environment:
     HOME: "{{ labstrap_user_home }}"
+  retries: 3
+  delay: 5
+  until: camoufox_fetch.rc == 0
+
+- name: Verify camoufox virtualenv module exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.venvs/camoufox/bin/python"
+  register: camoufox_python
+
+- name: Fail when camoufox virtualenv is missing
+  ansible.builtin.fail:
+    msg: >-
+      Camoufox installation did not create {{ labstrap_user_home }}/.venvs/camoufox.
+      Check pip output and rerun: sudo labstrap extras camoufox
+  when: not camoufox_python.stat.exists

@@ -15,6 +15,7 @@
       echo "present"
     else
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      "${HOME}/.cargo/bin/rustup" default stable
       echo "installed"
     fi
   args:
@@ -24,13 +25,48 @@
   become_user: "{{ user }}"
   environment:
     HOME: "{{ labstrap_user_home }}"
+    PATH: "{{ labstrap_user_home }}/.cargo/bin:{{ ansible_env.PATH }}"
 
-- name: Ensure cargo bin path is exported in .zshrc
+- name: Ensure cargo bin path is exported in shell rc files
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export PATH="$HOME/.cargo/bin:$PATH"'
     state: present
     create: true
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
+
+- name: Ensure local user bin directory exists for cargo wrapper
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Ensure cargo wrapper exists in local user bin
+  ansible.builtin.copy:
+    dest: "{{ labstrap_user_home }}/.local/bin/cargo"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      exec "$HOME/.cargo/bin/cargo" "$@"
+
+- name: Verify cargo binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.cargo/bin/cargo"
+  register: cargo_binary
+
+- name: Fail when cargo binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      Cargo installation finished without producing {{ labstrap_user_home }}/.cargo/bin/cargo.
+      Check rustup output and rerun: sudo labstrap extras cargo
+  when: not cargo_binary.stat.exists

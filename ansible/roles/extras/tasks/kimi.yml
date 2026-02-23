@@ -10,10 +10,21 @@
 - name: Install kimi CLI
   ansible.builtin.shell: |
     set -euo pipefail
+    export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
     if [ -x "${HOME}/.local/bin/kimi" ]; then
       echo "present"
     else
       curl -LsSf https://code.kimi.com/install.sh | bash
+      if [ ! -x "${HOME}/.local/bin/kimi" ]; then
+        if [ -x "${HOME}/.local/bin/uv" ]; then
+          "${HOME}/.local/bin/uv" tool install --python 3.13 kimi-cli
+        elif [ -x "${HOME}/.cargo/bin/uv" ]; then
+          "${HOME}/.cargo/bin/uv" tool install --python 3.13 kimi-cli
+        else
+          echo "Kimi install did not produce kimi or uv under user home paths." >&2
+          exit 1
+        fi
+      fi
       echo "installed"
     fi
   args:
@@ -23,13 +34,30 @@
   become_user: "{{ user }}"
   environment:
     HOME: "{{ labstrap_user_home }}"
+    PATH: "{{ labstrap_user_home }}/.local/bin:{{ labstrap_user_home }}/.cargo/bin:{{ ansible_env.PATH }}"
 
-- name: Ensure local user bin path is exported in .zshrc for kimi
+- name: Ensure local user bin path is exported in shell rc files for kimi
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export PATH="$HOME/.local/bin:$PATH"'
     state: present
     create: true
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
+
+- name: Verify kimi binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.local/bin/kimi"
+  register: kimi_binary
+
+- name: Fail when kimi binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      Kimi installation finished without producing {{ labstrap_user_home }}/.local/bin/kimi.
+      Check installer output and rerun: sudo labstrap extras kimi
+  when: not kimi_binary.stat.exists

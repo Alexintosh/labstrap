@@ -137,6 +137,7 @@ Supported components:
 - `all`
 
 Each component is independently idempotent.
+`extras all` attempts every enabled component and reports a consolidated failure summary at the end if any component fails.
 
 `tcs` installs TypeScript and provides a `tcs` wrapper that delegates to `tsc`.
 `codex`, `claudecode`, `pm2`, `pnpm`, `tcs`, `tsx`, and `clawvault` depend on the `node` component.
@@ -166,6 +167,7 @@ Checks common failure causes before/during provisioning:
 - Invalid `sshd_config` or missing `/run/sshd`
 - npm/nvm incompatibilities in `~/.npmrc` (`prefix`/`globalconfig`)
 - Linuxbrew path ownership/writability for Homebrew installs
+- Selected extras presence checks (`claudecode`, `kimi`, `camoufox`, `cargo`, `tsx`, `openclaw`, `bun`, `whisper`, `rbw`)
 
 Use auto-fix mode for safe remediations:
 

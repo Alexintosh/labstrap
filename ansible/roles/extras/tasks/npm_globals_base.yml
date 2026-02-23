@@ -17,6 +17,14 @@
     group: "{{ user }}"
     mode: "0755"
 
+- name: Ensure local user bin directory exists for npm shims
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
 - name: Remove npm prefix/globalconfig overrides incompatible with nvm
   ansible.builtin.lineinfile:
     path: "{{ labstrap_user_home }}/.npmrc"
@@ -27,18 +35,44 @@
     group: "{{ user }}"
     mode: "0644"
 
-- name: Ensure npm global prefix is exported in .zshrc
+- name: Ensure npm global prefix is exported in shell rc files
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export NPM_CONFIG_PREFIX="$HOME/.npm-global"'
     state: present
     create: true
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
 
-- name: Ensure npm global bin path is exported in .zshrc
+- name: Ensure npm global bin path is exported in shell rc files
   ansible.builtin.lineinfile:
-    path: "{{ labstrap_user_home }}/.zshrc"
+    path: "{{ item }}"
     line: 'export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"'
     state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
+
+- name: Ensure local user bin path is exported in shell rc files
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"

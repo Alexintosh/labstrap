@@ -103,8 +103,58 @@ suggest_failure_hint() {
     return
   fi
 
+  if [[ "$phase" == "extras" && "$task" == *"Fail when one or more extras components failed"* ]]; then
+    echo "Run: sudo labstrap doctor ; then rerun only failed components (example: sudo labstrap extras tsx)"
+    return
+  fi
+
   if [[ "$detail" == *".npmrc"* && "$detail" == *"incompatible with nvm"* ]]; then
     echo "Your ~/.npmrc has prefix/globalconfig incompatible with nvm. Remove those lines and rerun: sudo labstrap extras node && sudo labstrap extras codex"
+    return
+  fi
+
+  if [[ "$detail" == *"Claude Code installation finished without producing"* ]]; then
+    echo "Claude Code CLI install failed. Run: sudo labstrap extras node && sudo labstrap extras claudecode"
+    return
+  fi
+
+  if [[ "$detail" == *"tsx installation finished without producing"* ]]; then
+    echo "tsx install failed. Run: sudo labstrap extras node && sudo labstrap extras tsx"
+    return
+  fi
+
+  if [[ "$detail" == *"Kimi installation finished without producing"* ]]; then
+    echo "Kimi install failed. Verify internet access, then rerun: sudo labstrap extras kimi"
+    return
+  fi
+
+  if [[ "$detail" == *"Camoufox installation did not create"* ]]; then
+    echo "Camoufox install failed. Rerun with: sudo labstrap extras camoufox"
+    return
+  fi
+
+  if [[ "$detail" == *"Cargo installation finished without producing"* ]]; then
+    echo "Cargo install failed. Rerun with: sudo labstrap extras cargo"
+    return
+  fi
+
+  if [[ "$detail" == *"OpenClaw installation finished without producing"* ]]; then
+    echo "OpenClaw install failed. Rerun with: sudo labstrap extras openclaw"
+    return
+  fi
+
+  if [[ "$detail" == *"bun installation finished without producing"* ]]; then
+    echo "bun install failed. Rerun with: sudo labstrap extras bun"
+    return
+  fi
+
+  if [[ "$detail" == *"Whisper installation finished without producing"* ]]; then
+    echo "Whisper install failed. Rerun with: sudo labstrap extras whisper"
+    return
+  fi
+
+  if [[ "$detail" == *"rbw installation finished without producing"* ]]; then
+    echo "rbw install failed. Run: sudo labstrap extras homebrew && sudo labstrap extras rbw"
     return
   fi
 
@@ -647,6 +697,98 @@ run_doctor() {
     warn_count=$((warn_count + 1))
   fi
 
+  if [[ -n "$user_home" ]]; then
+    if [[ "$(config_nested_value extras claudecode)" == "true" ]]; then
+      if [[ -x "$user_home/.npm-global/bin/claude" || -x "$user_home/.local/bin/claude" ]]; then
+        doctor_record "PASS" "extra claudecode installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra claudecode installed" "run: sudo labstrap extras claudecode"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras kimi)" == "true" ]]; then
+      if [[ -x "$user_home/.local/bin/kimi" ]]; then
+        doctor_record "PASS" "extra kimi installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra kimi installed" "run: sudo labstrap extras kimi"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras camoufox)" == "true" ]]; then
+      if [[ -x "$user_home/.local/bin/camoufox" && -x "$user_home/.venvs/camoufox/bin/python" ]]; then
+        doctor_record "PASS" "extra camoufox installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra camoufox installed" "run: sudo labstrap extras camoufox"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras cargo)" == "true" ]]; then
+      if [[ -x "$user_home/.cargo/bin/cargo" || -x "$user_home/.local/bin/cargo" ]]; then
+        doctor_record "PASS" "extra cargo installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra cargo installed" "run: sudo labstrap extras cargo"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras tsx)" == "true" ]]; then
+      if [[ -x "$user_home/.npm-global/bin/tsx" || -x "$user_home/.local/bin/tsx" ]]; then
+        doctor_record "PASS" "extra tsx installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra tsx installed" "run: sudo labstrap extras tsx"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras openclaw)" == "true" ]]; then
+      if [[ -x "$user_home/.openclaw/bin/openclaw" || -x "$user_home/.npm-global/bin/openclaw" ]]; then
+        doctor_record "PASS" "extra openclaw installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra openclaw installed" "run: sudo labstrap extras openclaw"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras bun)" == "true" ]]; then
+      if [[ -x "$user_home/.bun/bin/bun" || -x "$user_home/.local/bin/bun" ]]; then
+        doctor_record "PASS" "extra bun installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra bun installed" "run: sudo labstrap extras bun"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras whisper)" == "true" ]]; then
+      if [[ -x "$user_home/.venvs/whisper/bin/whisper" ]]; then
+        doctor_record "PASS" "extra whisper installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra whisper installed" "run: sudo labstrap extras whisper"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras rbw)" == "true" ]]; then
+      if [[ -x "$user_home/.linuxbrew/bin/rbw" || -x "/home/linuxbrew/.linuxbrew/bin/rbw" || -x "$user_home/.local/bin/rbw" ]]; then
+        doctor_record "PASS" "extra rbw installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra rbw installed" "run: sudo labstrap extras rbw"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+  fi
+
   echo
   echo "doctor summary: pass=$pass_count warn=$warn_count fail=$fail_count fixed=$fix_count"
   if [[ "$fail_count" -gt 0 ]]; then
@@ -757,7 +899,7 @@ run_status() {
   fi
 
   if [[ "$extras_claudecode" == "true" ]]; then
-    status_check "Extra: claude code installed" "[[ -x $user_home_q/.npm-global/bin/claude ]]" || failures=$((failures + 1))
+    status_check "Extra: claude code installed" "[[ -x $user_home_q/.npm-global/bin/claude || -x $user_home_q/.local/bin/claude ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_kimi" == "true" ]]; then
@@ -765,11 +907,11 @@ run_status() {
   fi
 
   if [[ "$extras_camoufox" == "true" ]]; then
-    status_check "Extra: camoufox installed" "[[ -x $user_home_q/.local/bin/camoufox ]]" || failures=$((failures + 1))
+    status_check "Extra: camoufox installed" "[[ -x $user_home_q/.local/bin/camoufox && -x $user_home_q/.venvs/camoufox/bin/python ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_cargo" == "true" ]]; then
-    status_check "Extra: cargo installed" "[[ -x $user_home_q/.cargo/bin/cargo ]]" || failures=$((failures + 1))
+    status_check "Extra: cargo installed" "[[ -x $user_home_q/.cargo/bin/cargo || -x $user_home_q/.local/bin/cargo ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_pm2" == "true" ]]; then
@@ -785,11 +927,11 @@ run_status() {
   fi
 
   if [[ "$extras_tsx" == "true" ]]; then
-    status_check "Extra: tsx installed" "[[ -x $user_home_q/.npm-global/bin/tsx ]]" || failures=$((failures + 1))
+    status_check "Extra: tsx installed" "[[ -x $user_home_q/.npm-global/bin/tsx || -x $user_home_q/.local/bin/tsx ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_openclaw" == "true" ]]; then
-    status_check "Extra: openclaw installed" "[[ -x $user_home_q/.local/bin/openclaw || -x $user_home_q/.openclaw/bin/openclaw || -x $user_home_q/.npm-global/bin/openclaw ]]" || failures=$((failures + 1))
+    status_check "Extra: openclaw installed" "[[ -x $user_home_q/.openclaw/bin/openclaw || -x $user_home_q/.npm-global/bin/openclaw ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_clawvault" == "true" ]]; then
@@ -797,15 +939,15 @@ run_status() {
   fi
 
   if [[ "$extras_bun" == "true" ]]; then
-    status_check "Extra: bun installed" "[[ -x $user_home_q/.bun/bin/bun ]]" || failures=$((failures + 1))
+    status_check "Extra: bun installed" "[[ -x $user_home_q/.bun/bin/bun || -x $user_home_q/.local/bin/bun ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_whisper" == "true" ]]; then
-    status_check "Extra: whisper virtualenv installed" "[[ -x $user_home_q/.venvs/whisper/bin/whisper && -L /usr/local/bin/whisper ]]" || failures=$((failures + 1))
+    status_check "Extra: whisper virtualenv installed" "[[ -x $user_home_q/.venvs/whisper/bin/whisper && ( -L /usr/local/bin/whisper || -x $user_home_q/.local/bin/whisper ) ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_rbw" == "true" ]]; then
-    status_check "Extra: rbw installed" "[[ -x $user_home_q/.linuxbrew/bin/rbw || -x /home/linuxbrew/.linuxbrew/bin/rbw ]]" || failures=$((failures + 1))
+    status_check "Extra: rbw installed" "[[ -x $user_home_q/.linuxbrew/bin/rbw || -x /home/linuxbrew/.linuxbrew/bin/rbw || -x $user_home_q/.local/bin/rbw ]]" || failures=$((failures + 1))
   fi
 
   echo

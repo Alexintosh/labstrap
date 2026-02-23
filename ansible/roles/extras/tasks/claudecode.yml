@@ -9,6 +9,7 @@
     . "${NVM_DIR}/nvm.sh"
     export NPM_CONFIG_PREFIX="${HOME}/.npm-global"
     export npm_config_prefix="${HOME}/.npm-global"
+    npm config set prefix "${HOME}/.npm-global" >/dev/null
     if "${HOME}/.npm-global/bin/claude" --version >/dev/null 2>&1; then
       echo "present"
     else
@@ -22,3 +23,25 @@
   become_user: "{{ user }}"
   environment:
     HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure claude wrapper exists in local user bin
+  ansible.builtin.copy:
+    dest: "{{ labstrap_user_home }}/.local/bin/claude"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      exec "$HOME/.npm-global/bin/claude" "$@"
+
+- name: Verify Claude Code CLI binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.npm-global/bin/claude"
+  register: claude_binary
+
+- name: Fail when Claude Code CLI binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      Claude Code installation finished without producing {{ labstrap_user_home }}/.npm-global/bin/claude.
+      Check npm logs and rerun: sudo labstrap extras claudecode
+  when: not claude_binary.stat.exists
