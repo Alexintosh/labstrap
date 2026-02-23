@@ -76,6 +76,7 @@ labstrap init
 labstrap harden
 labstrap extras [component|all]
 labstrap allow-key <path_to_pubkey>
+labstrap doctor [--fix]
 labstrap status
 ```
 
@@ -156,6 +157,21 @@ Verifies:
 - Tailscale connected
 - Key service state (`ssh`, `fail2ban`, `tailscaled`)
 - Enabled extras presence
+
+### `doctor`
+
+Checks common failure causes before/during provisioning:
+
+- Missing SSH key for hardening
+- Invalid `sshd_config` or missing `/run/sshd`
+- npm/nvm incompatibilities in `~/.npmrc` (`prefix`/`globalconfig`)
+- Linuxbrew path ownership/writability for Homebrew installs
+
+Use auto-fix mode for safe remediations:
+
+```bash
+sudo labstrap doctor --fix
+```
 
 ## Configuration
 

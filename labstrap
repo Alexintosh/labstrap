@@ -303,6 +303,7 @@ Usage:
   labstrap harden
   labstrap extras [component|all]
   labstrap allow-key <path_to_pubkey>
+  labstrap doctor [--fix]
   labstrap status
 USAGE
 }
@@ -467,6 +468,199 @@ status_check() {
   log_event "ERROR" "status.check" "Status check failed" "check" "$label" "result" "FAIL"
   echo "[FAIL] $label"
   return 1
+}
+
+doctor_record() {
+  local level="$1"
+  local label="$2"
+  local detail="${3:-}"
+
+  case "$level" in
+    PASS)
+      echo "[PASS] $label"
+      log_event "INFO" "doctor.check" "Doctor check passed" "check" "$label" "result" "PASS"
+      ;;
+    WARN)
+      echo "[WARN] $label${detail:+ - $detail}"
+      log_event "WARN" "doctor.check" "Doctor check warning" "check" "$label" "result" "WARN" "detail" "$detail"
+      ;;
+    FAIL)
+      echo "[FAIL] $label${detail:+ - $detail}"
+      log_event "ERROR" "doctor.check" "Doctor check failed" "check" "$label" "result" "FAIL" "detail" "$detail"
+      ;;
+    FIXED)
+      echo "[FIXED] $label${detail:+ - $detail}"
+      log_event "INFO" "doctor.check" "Doctor check fixed" "check" "$label" "result" "FIXED" "detail" "$detail"
+      ;;
+  esac
+}
+
+run_doctor() {
+  local fix_mode="${1:-0}"
+  local user_name=""
+  local user_home=""
+  local fail_count=0
+  local warn_count=0
+  local pass_count=0
+  local fix_count=0
+  local detail=""
+
+  banner "labstrap doctor"
+  if [[ "$fix_mode" == "1" ]]; then
+    echo "fix mode: enabled"
+  else
+    echo "fix mode: disabled"
+  fi
+
+  if command -v ansible-playbook >/dev/null 2>&1; then
+    doctor_record "PASS" "ansible-playbook installed"
+    pass_count=$((pass_count + 1))
+  else
+    doctor_record "FAIL" "ansible-playbook installed" "install dependencies via: sudo ./install.sh"
+    fail_count=$((fail_count + 1))
+  fi
+
+  user_name="$(config_value user)"
+  if [[ -z "$user_name" ]]; then
+    doctor_record "FAIL" "config user value" "missing 'user:' in $CONFIG_PATH"
+    fail_count=$((fail_count + 1))
+  elif id "$user_name" >/dev/null 2>&1; then
+    user_home="$(getent passwd "$user_name" | cut -d: -f6)"
+    doctor_record "PASS" "provisioning user exists" "$user_name"
+    pass_count=$((pass_count + 1))
+  else
+    doctor_record "FAIL" "provisioning user exists" "run: sudo labstrap init"
+    fail_count=$((fail_count + 1))
+  fi
+
+  if [[ -n "$user_home" ]]; then
+    if [[ -d "$user_home/.ssh" ]]; then
+      doctor_record "PASS" "user .ssh directory exists" "$user_home/.ssh"
+      pass_count=$((pass_count + 1))
+    else
+      doctor_record "WARN" "user .ssh directory exists" "will be created by harden/allow-key"
+      warn_count=$((warn_count + 1))
+    fi
+
+    if [[ -s "$user_home/.ssh/authorized_keys" ]]; then
+      doctor_record "PASS" "authorized_keys has at least one key"
+      pass_count=$((pass_count + 1))
+    else
+      doctor_record "FAIL" "authorized_keys has at least one key" "run: sudo labstrap allow-key /path/to/key.pub"
+      fail_count=$((fail_count + 1))
+    fi
+
+    if [[ -f "$user_home/.npmrc" ]]; then
+      detail="$(grep -E '^[[:space:]]*(prefix|globalconfig)[[:space:]]*=' "$user_home/.npmrc" || true)"
+      if [[ -n "$detail" ]]; then
+        if [[ "$fix_mode" == "1" ]]; then
+          sed -i.bak -E '/^[[:space:]]*(prefix|globalconfig)[[:space:]]*=/d' "$user_home/.npmrc"
+          chown "$user_name:$user_name" "$user_home/.npmrc" || true
+          doctor_record "FIXED" "npmrc nvm compatibility" "removed prefix/globalconfig from $user_home/.npmrc"
+          fix_count=$((fix_count + 1))
+        else
+          doctor_record "FAIL" "npmrc nvm compatibility" "remove prefix/globalconfig lines from $user_home/.npmrc or run: sudo labstrap doctor --fix"
+          fail_count=$((fail_count + 1))
+        fi
+      else
+        doctor_record "PASS" "npmrc nvm compatibility"
+        pass_count=$((pass_count + 1))
+      fi
+    else
+      doctor_record "PASS" "npmrc nvm compatibility" "no ~/.npmrc override found"
+      pass_count=$((pass_count + 1))
+    fi
+
+    if [[ -d "/home/linuxbrew/.linuxbrew" ]]; then
+      if sudo -u "$user_name" test -w /home/linuxbrew/.linuxbrew; then
+        doctor_record "PASS" "linuxbrew path writable by user" "/home/linuxbrew/.linuxbrew"
+        pass_count=$((pass_count + 1))
+      else
+        if [[ "$fix_mode" == "1" ]]; then
+          mkdir -p /home/linuxbrew/.linuxbrew
+          chown -R "$user_name:$user_name" /home/linuxbrew
+          doctor_record "FIXED" "linuxbrew path writable by user" "updated ownership under /home/linuxbrew"
+          fix_count=$((fix_count + 1))
+        else
+          doctor_record "FAIL" "linuxbrew path writable by user" "run: sudo chown -R $user_name:$user_name /home/linuxbrew or run: sudo labstrap doctor --fix"
+          fail_count=$((fail_count + 1))
+        fi
+      fi
+    else
+      if [[ "$fix_mode" == "1" ]]; then
+        mkdir -p /home/linuxbrew/.linuxbrew
+        chown -R "$user_name:$user_name" /home/linuxbrew
+        doctor_record "FIXED" "linuxbrew path exists" "created /home/linuxbrew/.linuxbrew"
+        fix_count=$((fix_count + 1))
+      else
+        doctor_record "WARN" "linuxbrew path exists" "will be created during homebrew install"
+        warn_count=$((warn_count + 1))
+      fi
+    fi
+  fi
+
+  if [[ -f /etc/ssh/sshd_config ]]; then
+    doctor_record "PASS" "sshd_config exists"
+    pass_count=$((pass_count + 1))
+  else
+    doctor_record "FAIL" "sshd_config exists" "install openssh-server or run: sudo labstrap harden"
+    fail_count=$((fail_count + 1))
+  fi
+
+  if [[ -d /run/sshd ]]; then
+    doctor_record "PASS" "/run/sshd exists"
+    pass_count=$((pass_count + 1))
+  else
+    if [[ "$fix_mode" == "1" ]]; then
+      mkdir -p /run/sshd
+      chmod 755 /run/sshd
+      doctor_record "FIXED" "/run/sshd exists" "created /run/sshd"
+      fix_count=$((fix_count + 1))
+    else
+      doctor_record "WARN" "/run/sshd exists" "run: sudo mkdir -p /run/sshd && sudo chmod 755 /run/sshd"
+      warn_count=$((warn_count + 1))
+    fi
+  fi
+
+  if /usr/sbin/sshd -t -f /etc/ssh/sshd_config >/dev/null 2>&1; then
+    doctor_record "PASS" "sshd configuration validates"
+    pass_count=$((pass_count + 1))
+  else
+    detail="$(/usr/sbin/sshd -t -f /etc/ssh/sshd_config 2>&1 || true)"
+    doctor_record "FAIL" "sshd configuration validates" "$(truncate_text "$detail" 220)"
+    fail_count=$((fail_count + 1))
+  fi
+
+  if systemctl is-active --quiet ssh || systemctl is-active --quiet sshd; then
+    doctor_record "PASS" "ssh service is active"
+    pass_count=$((pass_count + 1))
+  else
+    doctor_record "WARN" "ssh service is active" "start with: sudo systemctl start ssh || sudo systemctl start sshd"
+    warn_count=$((warn_count + 1))
+  fi
+
+  if command -v tailscale >/dev/null 2>&1; then
+    doctor_record "PASS" "tailscale installed"
+    pass_count=$((pass_count + 1))
+  else
+    doctor_record "WARN" "tailscale installed" "installed by harden phase"
+    warn_count=$((warn_count + 1))
+  fi
+
+  echo
+  echo "doctor summary: pass=$pass_count warn=$warn_count fail=$fail_count fixed=$fix_count"
+  if [[ "$fail_count" -gt 0 ]]; then
+    echo "doctor status: FAIL"
+    return 1
+  fi
+
+  if [[ "$warn_count" -gt 0 ]]; then
+    echo "doctor status: WARN"
+    return 0
+  fi
+
+  echo "doctor status: OK"
+  return 0
 }
 
 run_status() {
@@ -680,6 +874,25 @@ main() {
       banner "allow-key"
       run_preflight allow-key
       run_allow_key "$key_path"
+      ;;
+
+    doctor)
+      require_root
+      local doctor_arg="${2:-}"
+      local fix_mode="0"
+      case "$doctor_arg" in
+        "")
+          ;;
+        --fix)
+          fix_mode="1"
+          ;;
+        *)
+          echo "ERROR: Invalid doctor option '$doctor_arg'." >&2
+          echo "Usage: labstrap doctor [--fix]" >&2
+          exit 1
+          ;;
+      esac
+      run_doctor "$fix_mode"
       ;;
 
     status)
