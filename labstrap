@@ -93,6 +93,11 @@ suggest_failure_hint() {
     return
   fi
 
+  if [[ "$detail" == *"/home/linuxbrew/.linuxbrew"* || "$detail" == *"Homebrew installation failed"* ]]; then
+    echo "Homebrew issue. Fix ownership and retry: sudo mkdir -p /home/linuxbrew/.linuxbrew && sudo chown -R $(config_value user):$(config_value user) /home/linuxbrew ; then rerun: sudo labstrap extras homebrew (or interactive mode: sudo LABSTRAP_HOMEBREW_INTERACTIVE=1 labstrap extras homebrew)"
+    return
+  fi
+
   if [[ "$detail" == *"Node runtime is required"* ]]; then
     echo "Run the Node component first: sudo labstrap extras node"
     return

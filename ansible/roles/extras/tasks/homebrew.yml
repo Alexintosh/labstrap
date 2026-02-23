@@ -15,16 +15,87 @@
     path: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
   register: user_brew_binary
 
-- name: Install Homebrew for the provisioning user
+- name: Check for shared Homebrew installation
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/brew
+  register: shared_brew_binary
+
+- name: Set Homebrew install state fact
+  ansible.builtin.set_fact:
+    homebrew_installed: "{{ user_brew_binary.stat.exists or shared_brew_binary.stat.exists }}"
+
+- name: Set Homebrew installer mode fact
+  ansible.builtin.set_fact:
+    homebrew_interactive_mode: "{{ (lookup('env', 'LABSTRAP_HOMEBREW_INTERACTIVE') | default('0', true) | lower) in ['1', 'true', 'yes', 'on'] }}"
+
+- name: Ensure /home/linuxbrew exists with provisioning-user ownership
+  ansible.builtin.file:
+    path: /home/linuxbrew
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+  when: not homebrew_installed
+
+- name: Ensure /home/linuxbrew/.linuxbrew exists with provisioning-user ownership
+  ansible.builtin.file:
+    path: /home/linuxbrew/.linuxbrew
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+  when: not homebrew_installed
+
+- name: Install Homebrew for the provisioning user (non-interactive)
   ansible.builtin.shell: |
     set -euo pipefail
     NONINTERACTIVE=1 CI=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   args:
     executable: /bin/bash
-    creates: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+  register: homebrew_install_noninteractive
+  changed_when: true
+  failed_when: false
   become_user: "{{ user }}"
   environment:
     HOME: "{{ labstrap_user_home }}"
+  when:
+    - not homebrew_installed
+    - not homebrew_interactive_mode
+
+- name: Install Homebrew for the provisioning user (interactive mode)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  args:
+    executable: /bin/bash
+  register: homebrew_install_interactive
+  changed_when: true
+  failed_when: false
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+  when:
+    - not homebrew_installed
+    - homebrew_interactive_mode
+
+- name: Refresh Homebrew binary checks after installation attempt
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+    - /home/linuxbrew/.linuxbrew/bin/brew
+  register: post_install_brew_checks
+
+- name: Fail if Homebrew is still missing after install attempt
+  ansible.builtin.fail:
+    msg: >-
+      Homebrew installation failed.
+      mode: {{ 'interactive' if homebrew_interactive_mode else 'non-interactive' }}
+      stdout: {{ homebrew_install_noninteractive.stdout | default(homebrew_install_interactive.stdout | default('')) }}
+      stderr: {{ homebrew_install_noninteractive.stderr | default(homebrew_install_interactive.stderr | default('')) }}
+      Ensure '{{ user }}' can write to /home/linuxbrew/.linuxbrew or install manually, then rerun.
+  when: >-
+    not (post_install_brew_checks.results[0].stat.exists or post_install_brew_checks.results[1].stat.exists)
 
 - name: Install global Homebrew profile script
   ansible.builtin.copy:

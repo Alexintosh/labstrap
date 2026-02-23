@@ -65,6 +65,10 @@ Bootstrap configuration overrides (optional):
 - `LABSTRAP_REF` (default: `main`)
 - `LABSTRAP_ARCHIVE_URL` (explicit archive URL override)
 
+Homebrew installer mode override (optional):
+
+- `LABSTRAP_HOMEBREW_INTERACTIVE=1` to use interactive Homebrew install mode
+
 ## Commands
 
 ```bash
