@@ -83,6 +83,11 @@ suggest_failure_hint() {
     return
   fi
 
+  if [[ "$detail" == *"tailscale up timed out"* || "$task" == *"Bring up Tailscale"* ]]; then
+    echo "Run: sudo tailscale up --ssh=false ; complete auth in browser ; then rerun: sudo labstrap harden"
+    return
+  fi
+
   if [[ "$detail" == *"Homebrew is required"* ]]; then
     echo "Run the Homebrew component first: sudo labstrap extras homebrew"
     return

@@ -26,6 +26,24 @@
     path: /usr/bin/tailscale
   register: tailscale_binary
 
+- name: "2. Ensure OpenSSH server is installed"
+  ansible.builtin.apt:
+    name: openssh-server
+    state: present
+    update_cache: true
+
+- name: "2. Check whether sshd_config exists"
+  ansible.builtin.stat:
+    path: /etc/ssh/sshd_config
+  register: sshd_config_stat
+
+- name: "2. Fail if sshd_config is missing"
+  ansible.builtin.fail:
+    msg: >-
+      OpenSSH server config file /etc/ssh/sshd_config is missing.
+      Ensure openssh-server installed correctly, then rerun 'labstrap harden'.
+  when: not sshd_config_stat.stat.exists
+
 - name: "2. Install Tailscale via official installer"
   ansible.builtin.shell: "curl -fsSL https://tailscale.com/install.sh | sh"
   args:
@@ -39,10 +57,24 @@
     enabled: true
 
 - name: "3. Bring up Tailscale with Tailscale SSH disabled"
-  ansible.builtin.command: tailscale up --ssh=false
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_status_before_up
+  changed_when: false
+  failed_when: false
+
+- name: "3. Bring up Tailscale with Tailscale SSH disabled (bounded wait)"
+  ansible.builtin.command: timeout 90 tailscale up --ssh=false
   register: tailscale_up
   changed_when: false
   failed_when: false
+  when: tailscale_status_before_up.rc != 0 or not ((tailscale_status_before_up.stdout | default('')) is search('\"BackendState\"\\s*:\\s*\"Running\"'))
+
+- name: "3. Fail if Tailscale bring-up timed out"
+  ansible.builtin.fail:
+    msg: >-
+      tailscale up timed out after 90s, usually waiting for first-run authentication.
+      Run 'sudo tailscale up --ssh=false' manually, complete auth, then rerun 'labstrap harden'.
+  when: tailscale_up.rc | default(0) == 124
 
 - name: "3. Verify Tailscale is connected"
   ansible.builtin.command: tailscale status --json
