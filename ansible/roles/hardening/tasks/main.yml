@@ -182,8 +182,20 @@
   notify: restart ssh
 
 - name: "6. Validate SSH daemon configuration"
-  ansible.builtin.command: sshd -t
+  ansible.builtin.command: /usr/sbin/sshd -t -f /etc/ssh/sshd_config
+  register: sshd_validate
   changed_when: false
+  failed_when: false
+
+- name: "6. Fail if SSH daemon configuration is invalid"
+  ansible.builtin.fail:
+    msg: >-
+      sshd config validation failed.
+      stdout: {{ sshd_validate.stdout | default('') }}
+      stderr: {{ sshd_validate.stderr | default('') }}
+      Fix /etc/ssh/sshd_config syntax, validate with 'sudo /usr/sbin/sshd -t -f /etc/ssh/sshd_config',
+      then rerun 'labstrap harden'.
+  when: sshd_validate.rc != 0
 
 - name: "7. Restart SSH if configuration changed"
   ansible.builtin.meta: flush_handlers

@@ -103,6 +103,16 @@ suggest_failure_hint() {
     return
   fi
 
+  if [[ "$phase" == "harden" && "$task" == *"Validate SSH daemon configuration"* ]]; then
+    echo "Invalid sshd config. Run: sudo /usr/sbin/sshd -t -f /etc/ssh/sshd_config ; fix errors ; rerun: sudo labstrap harden"
+    return
+  fi
+
+  if [[ "$phase" == "harden" && "$task" == *"Fail if SSH daemon configuration is invalid"* ]]; then
+    echo "Fix /etc/ssh/sshd_config syntax then rerun: sudo labstrap harden"
+    return
+  fi
+
   if [[ "$phase" == "harden" && "$task" == *"Ensure tailscale0 firewall allowance exists"* ]]; then
     echo "UFW policy is missing tailscale0 allowance. Run: sudo ufw status verbose"
     return
