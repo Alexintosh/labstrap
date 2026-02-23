@@ -55,6 +55,183 @@ log_event() {
   fi
 }
 
+truncate_text() {
+  local text="${1:-}"
+  local limit="${2:-300}"
+  if [[ ${#text} -le $limit ]]; then
+    printf '%s' "$text"
+    return
+  fi
+  printf '%s...' "${text:0:limit}"
+}
+
+suggest_failure_hint() {
+  local phase="$1"
+  local task="$2"
+  local detail="$3"
+  local user_name
+  user_name="$(config_value user 2>/dev/null || true)"
+  [[ -n "$user_name" ]] || user_name="lab"
+
+  if [[ "$phase" == "harden" && "$task" == *"Ensure at least one SSH key exists"* ]]; then
+    echo "No SSH key found for user '$user_name'. Run: sudo labstrap allow-key /path/to/key.pub ; then rerun: sudo labstrap harden"
+    return
+  fi
+
+  if [[ "$detail" == *"Tailscale is not active"* || "$task" == *"Verify Tailscale is connected"* ]]; then
+    echo "Complete Tailscale authentication, then rerun: sudo labstrap harden"
+    return
+  fi
+
+  if [[ "$detail" == *"Homebrew is required"* ]]; then
+    echo "Run the Homebrew component first: sudo labstrap extras homebrew"
+    return
+  fi
+
+  if [[ "$detail" == *"Node runtime is required"* ]]; then
+    echo "Run the Node component first: sudo labstrap extras node"
+    return
+  fi
+
+  if [[ "$phase" == "harden" && "$task" == *"Ensure SSH is listening on configured port"* ]]; then
+    echo "SSH did not come up on the configured port. Check /etc/ssh/sshd_config and run: sudo sshd -t"
+    return
+  fi
+
+  if [[ "$phase" == "harden" && "$task" == *"Ensure tailscale0 firewall allowance exists"* ]]; then
+    echo "UFW policy is missing tailscale0 allowance. Run: sudo ufw status verbose"
+    return
+  fi
+
+  if [[ "$phase" == "preflight" ]]; then
+    echo "Fix the preflight issue and rerun the same command."
+    return
+  fi
+
+  echo "See log file for details: $LABSTRAP_LOG_FILE"
+}
+
+print_preflight_failure_summary() {
+  local phase="$1"
+  local line
+  local msg
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: Preflight failed for phase '$phase'. See log: $LABSTRAP_LOG_FILE" >&2
+    return
+  fi
+
+  line="$(python3 - "$LABSTRAP_LOG_FILE" "$phase" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+phase = sys.argv[2]
+last = None
+with open(path, "r", encoding="utf-8") as fp:
+    for raw in fp:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "preflight.check_failed" and event.get("phase") == phase:
+            last = event
+
+if last:
+    print(last.get("message", "Preflight check failed"))
+PY
+)"
+
+  msg="$(truncate_text "$line" 300)"
+  if [[ -n "$msg" ]]; then
+    echo "ERROR: Preflight failed for phase '$phase': $msg" >&2
+    echo "Next: $(suggest_failure_hint "preflight" "" "$msg")" >&2
+    echo "Log: $LABSTRAP_LOG_FILE" >&2
+    return
+  fi
+
+  echo "ERROR: Preflight failed for phase '$phase'. See log: $LABSTRAP_LOG_FILE" >&2
+}
+
+print_ansible_failure_summary() {
+  local phase="$1"
+  local summary
+  local task=""
+  local status=""
+  local detail=""
+  local hint=""
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: Phase '$phase' failed. See log: $LABSTRAP_LOG_FILE" >&2
+    return
+  fi
+
+  summary="$(python3 - "$LABSTRAP_LOG_FILE" "$phase" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+phase = sys.argv[2]
+failure = None
+
+with open(path, "r", encoding="utf-8") as fp:
+    for raw in fp:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "ansible.task" and event.get("phase") == phase and event.get("status") in {"failed", "unreachable"}:
+            failure = event
+
+if not failure:
+    sys.exit(1)
+
+task = failure.get("task", "")
+status = failure.get("status", "")
+detail = failure.get("msg") or failure.get("stderr") or failure.get("stdout") or ""
+detail = " ".join(detail.split())
+print(task)
+print(status)
+print(detail)
+PY
+)" || true
+
+  if [[ -n "$summary" ]]; then
+    task="$(printf '%s\n' "$summary" | sed -n '1p')"
+    status="$(printf '%s\n' "$summary" | sed -n '2p')"
+    detail="$(printf '%s\n' "$summary" | sed -n '3p')"
+  fi
+
+  task="$(truncate_text "$task" 180)"
+  detail="$(truncate_text "$detail" 350)"
+  hint="$(suggest_failure_hint "$phase" "$task" "$detail")"
+
+  if [[ -n "$task" ]]; then
+    echo "ERROR: Phase '$phase' failed at task: $task" >&2
+  else
+    echo "ERROR: Phase '$phase' failed." >&2
+  fi
+
+  if [[ -n "$status" ]]; then
+    echo "Status: $status" >&2
+  fi
+
+  if [[ -n "$detail" ]]; then
+    echo "Reason: $detail" >&2
+  fi
+
+  if [[ -n "$hint" ]]; then
+    echo "Next: $hint" >&2
+  fi
+  echo "Log: $LABSTRAP_LOG_FILE" >&2
+}
+
 init_logging() {
   local command_name="$1"
   local configured_dir="${LABSTRAP_LOG_DIR:-/var/log/labstrap}"
@@ -131,6 +308,7 @@ run_preflight() {
   fi
 
   log_event "ERROR" "preflight.failed" "Preflight checks failed" "phase" "$phase"
+  print_preflight_failure_summary "$phase"
   return 1
 }
 
@@ -165,6 +343,7 @@ run_ansible_phase() {
   fi
 
   log_event "ERROR" "ansible.failed" "Ansible phase failed" "phase" "$action"
+  print_ansible_failure_summary "$action"
   return 1
 }
 
