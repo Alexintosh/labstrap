@@ -17,6 +17,7 @@
 ```text
 labstrap/
 ├── labstrap
+├── bootstrap.sh
 ├── install.sh
 ├── ansible/
 │   ├── playbook.yml
@@ -34,6 +35,20 @@ labstrap/
 
 ## Install
 
+First-install (no repo clone required):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alexintosh/labstrap/main/bootstrap.sh | sudo bash
+```
+
+or
+
+```bash
+wget -qO- https://raw.githubusercontent.com/Alexintosh/labstrap/main/bootstrap.sh | sudo bash
+```
+
+Local install (from a checked-out repo):
+
 ```bash
 sudo ./install.sh
 ```
@@ -43,6 +58,12 @@ This installs:
 - dependencies (including `ansible`)
 - project files to `/opt/labstrap`
 - command symlink at `/usr/local/bin/labstrap`
+
+Bootstrap configuration overrides (optional):
+
+- `LABSTRAP_REPO_URL` (default: `https://github.com/Alexintosh/labstrap.git`)
+- `LABSTRAP_REF` (default: `main`)
+- `LABSTRAP_ARCHIVE_URL` (explicit archive URL override)
 
 ## Commands
 
