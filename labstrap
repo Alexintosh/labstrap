@@ -103,6 +103,11 @@ suggest_failure_hint() {
     return
   fi
 
+  if [[ "$task" == *"Install nvm"* && "$detail" == *"Host key verification failed"* ]]; then
+    echo "nvm git checkout failed due submodule host-key verification. Run: sudo rm -rf \"$(getent passwd $(config_value user) | cut -d: -f6)/.nvm\" ; then rerun: sudo labstrap extras node"
+    return
+  fi
+
   if [[ "$phase" == "harden" && "$task" == *"Ensure SSH is listening on configured port"* ]]; then
     echo "SSH did not come up on the configured port. Check /etc/ssh/sshd_config and run: sudo sshd -t"
     return

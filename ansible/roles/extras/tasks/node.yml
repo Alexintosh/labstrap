@@ -1,10 +1,19 @@
 ---
+- name: Disable submodule recursion in existing nvm checkout
+  ansible.builtin.command: "git -C {{ labstrap_user_home }}/.nvm config --local submodule.recurse false"
+  changed_when: false
+  failed_when: false
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
 - name: Install nvm
   ansible.builtin.git:
     repo: https://github.com/nvm-sh/nvm.git
     dest: "{{ labstrap_user_home }}/.nvm"
     version: v0.40.3
     update: true
+    recursive: false
   become_user: "{{ user }}"
   environment:
     HOME: "{{ labstrap_user_home }}"
