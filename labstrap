@@ -103,6 +103,11 @@ suggest_failure_hint() {
     return
   fi
 
+  if [[ "$phase" == "harden" && "$task" == *"Ensure ssh service is active"* ]]; then
+    echo "SSH service is not active. Check: sudo systemctl status ssh ; if absent, check: sudo systemctl status sshd"
+    return
+  fi
+
   if [[ "$phase" == "harden" && "$task" == *"Validate SSH daemon configuration"* ]]; then
     echo "Invalid sshd config. Run: sudo /usr/sbin/sshd -t -f /etc/ssh/sshd_config ; fix errors ; rerun: sudo labstrap harden"
     return
@@ -110,6 +115,16 @@ suggest_failure_hint() {
 
   if [[ "$phase" == "harden" && "$task" == *"Fail if SSH daemon configuration is invalid"* ]]; then
     echo "Fix /etc/ssh/sshd_config syntax then rerun: sudo labstrap harden"
+    return
+  fi
+
+  if [[ "$detail" == *"Missing privilege separation directory"* ]]; then
+    echo "Create runtime dir and retry: sudo mkdir -p /run/sshd && sudo chmod 755 /run/sshd ; then rerun: sudo labstrap harden"
+    return
+  fi
+
+  if [[ "$phase" == "harden" && "$task" == *"Ensure OpenSSH server is installed"* ]]; then
+    echo "OpenSSH server install failed. Run: sudo apt-get update && sudo apt-get install -y openssh-server ; then rerun: sudo labstrap harden"
     return
   fi
 
@@ -441,6 +456,8 @@ status_check() {
 
 run_status() {
   local user_name
+  local user_home
+  local user_home_q
   local ssh_port
   local extras_homebrew
   local extras_zsh
@@ -465,6 +482,9 @@ run_status() {
   local failures=0
 
   user_name="$(config_value user)"
+  user_home="$(getent passwd "$user_name" 2>/dev/null | cut -d: -f6)"
+  [[ -n "$user_home" ]] || user_home="/home/$user_name"
+  printf -v user_home_q "%q" "$user_home"
   ssh_port="$(config_nested_value ssh port)"
   extras_homebrew="$(config_nested_value extras homebrew)"
   extras_zsh="$(config_nested_value extras zsh)"
@@ -491,7 +511,7 @@ run_status() {
 
   banner "labstrap status"
 
-  status_check "SSH service running" "systemctl is-active --quiet ssh" || failures=$((failures + 1))
+  status_check "SSH service running" "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd" || failures=$((failures + 1))
   status_check "SSH listening on port $ssh_port" "ss -ltn | awk '{print \$4}' | grep -Eq '[:.]$ssh_port$'" || failures=$((failures + 1))
   status_check "UFW active" "ufw status | grep -q 'Status: active'" || failures=$((failures + 1))
   status_check "UFW allows tailscale0" "ufw status | grep -q 'tailscale0'" || failures=$((failures + 1))
@@ -500,7 +520,7 @@ run_status() {
   status_check "Service: tailscaled running" "systemctl is-active --quiet tailscaled" || failures=$((failures + 1))
 
   if [[ "$extras_homebrew" == "true" ]]; then
-    status_check "Extra: homebrew installed" "[[ -x /home/$user_name/.linuxbrew/bin/brew || -x /home/linuxbrew/.linuxbrew/bin/brew ]]" || failures=$((failures + 1))
+    status_check "Extra: homebrew installed" "[[ -x $user_home_q/.linuxbrew/bin/brew || -x /home/linuxbrew/.linuxbrew/bin/brew ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_zsh" == "true" ]]; then
@@ -512,71 +532,71 @@ run_status() {
   fi
 
   if [[ "$extras_starship" == "true" ]]; then
-    status_check "Extra: starship installed" "[[ -x /home/$user_name/.local/bin/starship ]]" || failures=$((failures + 1))
+    status_check "Extra: starship installed" "[[ -x $user_home_q/.local/bin/starship ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_yazi" == "true" ]]; then
-    status_check "Extra: yazi installed" "[[ -x /home/$user_name/.linuxbrew/bin/yazi || -x /home/linuxbrew/.linuxbrew/bin/yazi ]]" || failures=$((failures + 1))
+    status_check "Extra: yazi installed" "[[ -x $user_home_q/.linuxbrew/bin/yazi || -x /home/linuxbrew/.linuxbrew/bin/yazi ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_node" == "true" ]]; then
-    status_check "Extra: node LTS installed" "ls /home/$user_name/.nvm/versions/node/*/bin/node >/dev/null 2>&1" || failures=$((failures + 1))
+    status_check "Extra: node LTS installed" "ls $user_home_q/.nvm/versions/node/*/bin/node >/dev/null 2>&1" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_codex" == "true" ]]; then
-    status_check "Extra: codex installed" "[[ -x /home/$user_name/.npm-global/bin/codex ]]" || failures=$((failures + 1))
+    status_check "Extra: codex installed" "[[ -x $user_home_q/.npm-global/bin/codex ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_claudecode" == "true" ]]; then
-    status_check "Extra: claude code installed" "[[ -x /home/$user_name/.npm-global/bin/claude ]]" || failures=$((failures + 1))
+    status_check "Extra: claude code installed" "[[ -x $user_home_q/.npm-global/bin/claude ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_kimi" == "true" ]]; then
-    status_check "Extra: kimi installed" "[[ -x /home/$user_name/.local/bin/kimi ]]" || failures=$((failures + 1))
+    status_check "Extra: kimi installed" "[[ -x $user_home_q/.local/bin/kimi ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_camoufox" == "true" ]]; then
-    status_check "Extra: camoufox installed" "[[ -x /home/$user_name/.local/bin/camoufox ]]" || failures=$((failures + 1))
+    status_check "Extra: camoufox installed" "[[ -x $user_home_q/.local/bin/camoufox ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_cargo" == "true" ]]; then
-    status_check "Extra: cargo installed" "[[ -x /home/$user_name/.cargo/bin/cargo ]]" || failures=$((failures + 1))
+    status_check "Extra: cargo installed" "[[ -x $user_home_q/.cargo/bin/cargo ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_pm2" == "true" ]]; then
-    status_check "Extra: pm2 installed" "[[ -x /home/$user_name/.npm-global/bin/pm2 ]]" || failures=$((failures + 1))
+    status_check "Extra: pm2 installed" "[[ -x $user_home_q/.npm-global/bin/pm2 ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_pnpm" == "true" ]]; then
-    status_check "Extra: pnpm installed" "[[ -x /home/$user_name/.npm-global/bin/pnpm ]]" || failures=$((failures + 1))
+    status_check "Extra: pnpm installed" "[[ -x $user_home_q/.npm-global/bin/pnpm ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_tcs" == "true" ]]; then
-    status_check "Extra: tcs installed" "[[ -x /home/$user_name/.local/bin/tcs ]]" || failures=$((failures + 1))
+    status_check "Extra: tcs installed" "[[ -x $user_home_q/.local/bin/tcs ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_tsx" == "true" ]]; then
-    status_check "Extra: tsx installed" "[[ -x /home/$user_name/.npm-global/bin/tsx ]]" || failures=$((failures + 1))
+    status_check "Extra: tsx installed" "[[ -x $user_home_q/.npm-global/bin/tsx ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_openclaw" == "true" ]]; then
-    status_check "Extra: openclaw installed" "[[ -x /home/$user_name/.local/bin/openclaw || -x /home/$user_name/.openclaw/bin/openclaw || -x /home/$user_name/.npm-global/bin/openclaw ]]" || failures=$((failures + 1))
+    status_check "Extra: openclaw installed" "[[ -x $user_home_q/.local/bin/openclaw || -x $user_home_q/.openclaw/bin/openclaw || -x $user_home_q/.npm-global/bin/openclaw ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_clawvault" == "true" ]]; then
-    status_check "Extra: clawvault installed" "[[ -x /home/$user_name/.npm-global/bin/clawvault ]]" || failures=$((failures + 1))
+    status_check "Extra: clawvault installed" "[[ -x $user_home_q/.npm-global/bin/clawvault ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_bun" == "true" ]]; then
-    status_check "Extra: bun installed" "[[ -x /home/$user_name/.bun/bin/bun ]]" || failures=$((failures + 1))
+    status_check "Extra: bun installed" "[[ -x $user_home_q/.bun/bin/bun ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_whisper" == "true" ]]; then
-    status_check "Extra: whisper virtualenv installed" "[[ -x /home/$user_name/.venvs/whisper/bin/whisper && -L /usr/local/bin/whisper ]]" || failures=$((failures + 1))
+    status_check "Extra: whisper virtualenv installed" "[[ -x $user_home_q/.venvs/whisper/bin/whisper && -L /usr/local/bin/whisper ]]" || failures=$((failures + 1))
   fi
 
   if [[ "$extras_rbw" == "true" ]]; then
-    status_check "Extra: rbw installed" "[[ -x /home/$user_name/.linuxbrew/bin/rbw || -x /home/linuxbrew/.linuxbrew/bin/rbw ]]" || failures=$((failures + 1))
+    status_check "Extra: rbw installed" "[[ -x $user_home_q/.linuxbrew/bin/rbw || -x /home/linuxbrew/.linuxbrew/bin/rbw ]]" || failures=$((failures + 1))
   fi
 
   echo

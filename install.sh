@@ -81,6 +81,9 @@ rsync -a --delete \
 chmod +x "$INSTALL_ROOT/labstrap"
 chmod +x "$INSTALL_ROOT/checks/preflight.sh"
 chmod +x "$INSTALL_ROOT/install.sh"
+if [[ -f "$INSTALL_ROOT/bootstrap.sh" ]]; then
+  chmod +x "$INSTALL_ROOT/bootstrap.sh"
+fi
 
 log_event "INFO" "install.symlink" "Updating labstrap symlink" "link" "$BIN_LINK" "target" "$INSTALL_ROOT/labstrap"
 ln -sfn "$INSTALL_ROOT/labstrap" "$BIN_LINK"

@@ -1,7 +1,17 @@
 ---
+- name: "1. Resolve provisioning user home directory"
+  ansible.builtin.command: "getent passwd {{ user }}"
+  register: hardening_user_passwd
+  changed_when: false
+  failed_when: hardening_user_passwd.rc != 0 or (hardening_user_passwd.stdout | trim) == ''
+
+- name: "1. Set provisioning user home directory fact"
+  ansible.builtin.set_fact:
+    labstrap_user_home: "{{ (hardening_user_passwd.stdout.split(':'))[5] }}"
+
 - name: "1. Ensure target user SSH directory exists"
   ansible.builtin.file:
-    path: "/home/{{ user }}/.ssh"
+    path: "{{ labstrap_user_home }}/.ssh"
     state: directory
     owner: "{{ user }}"
     group: "{{ user }}"
@@ -9,14 +19,14 @@
 
 - name: "1. Ensure authorized_keys file exists"
   ansible.builtin.file:
-    path: "/home/{{ user }}/.ssh/authorized_keys"
+    path: "{{ labstrap_user_home }}/.ssh/authorized_keys"
     state: touch
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0600"
 
 - name: "1. Ensure at least one SSH key exists for target user"
-  ansible.builtin.command: "awk 'NF && $1 !~ /^#/' /home/{{ user }}/.ssh/authorized_keys"
+  ansible.builtin.command: "awk 'NF && $1 !~ /^#/' '{{ labstrap_user_home }}/.ssh/authorized_keys'"
   register: authorized_keys_check
   changed_when: false
   failed_when: authorized_keys_check.rc != 0 or (authorized_keys_check.stdout_lines | length) < 1
@@ -32,6 +42,19 @@
     state: present
     update_cache: true
 
+- name: "2. Ensure hardening package dependencies are installed"
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ufw
+    state: present
+
+- name: "2. Ensure SSH service is enabled and running"
+  ansible.builtin.shell: "systemctl enable --now ssh || systemctl enable --now sshd"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: "2. Check whether sshd_config exists"
   ansible.builtin.stat:
     path: /etc/ssh/sshd_config
@@ -44,11 +67,31 @@
       Ensure openssh-server installed correctly, then rerun 'labstrap harden'.
   when: not sshd_config_stat.stat.exists
 
+- name: "2. Ensure SSH privilege separation directory exists"
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: "2. Install Tailscale via official installer"
   ansible.builtin.shell: "curl -fsSL https://tailscale.com/install.sh | sh"
   args:
     executable: /bin/bash
+  register: tailscale_install
+  failed_when: false
   when: not tailscale_binary.stat.exists
+
+- name: "2. Fail if Tailscale installer failed"
+  ansible.builtin.fail:
+    msg: >-
+      Tailscale installation failed.
+      stdout: {{ tailscale_install.stdout | default('') }}
+      stderr: {{ tailscale_install.stderr | default('') }}
+  when:
+    - not tailscale_binary.stat.exists
+    - tailscale_install.rc | default(0) != 0
 
 - name: "2. Ensure tailscaled service is enabled and running"
   ansible.builtin.service:
@@ -201,7 +244,9 @@
   ansible.builtin.meta: flush_handlers
 
 - name: "8. Ensure ssh service is active"
-  ansible.builtin.command: systemctl is-active --quiet ssh
+  ansible.builtin.shell: "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd"
+  args:
+    executable: /bin/bash
   changed_when: false
 
 - name: "8. Ensure SSH is listening on configured port"

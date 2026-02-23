@@ -25,7 +25,16 @@
       - whisper
       - rbw
       - dotfiles
-    labstrap_user_home: "/home/{{ user }}"
+
+- name: Resolve provisioning user home directory for extras
+  ansible.builtin.command: "getent passwd {{ user }}"
+  register: extras_user_passwd
+  changed_when: false
+  failed_when: extras_user_passwd.rc != 0 or (extras_user_passwd.stdout | trim) == ''
+
+- name: Set extras user home directory fact
+  ansible.builtin.set_fact:
+    labstrap_user_home: "{{ (extras_user_passwd.stdout.split(':'))[5] }}"
 
 - name: Validate extras component selection
   ansible.builtin.assert:

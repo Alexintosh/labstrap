@@ -1,5 +1,5 @@
 ---
 - name: restart ssh
-  ansible.builtin.service:
-    name: ssh
-    state: restarted
+  ansible.builtin.shell: "systemctl restart ssh || systemctl restart sshd"
+  args:
+    executable: /bin/bash

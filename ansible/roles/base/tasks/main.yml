@@ -37,9 +37,19 @@
     create_home: true
     state: present
 
+- name: Resolve provisioning user home directory
+  ansible.builtin.command: "getent passwd {{ user }}"
+  register: base_user_passwd
+  changed_when: false
+  failed_when: base_user_passwd.rc != 0 or (base_user_passwd.stdout | trim) == ''
+
+- name: Set provisioning user home directory fact
+  ansible.builtin.set_fact:
+    base_user_home: "{{ (base_user_passwd.stdout.split(':'))[5] }}"
+
 - name: Ensure user has an SSH directory
   ansible.builtin.file:
-    path: "/home/{{ user }}/.ssh"
+    path: "{{ base_user_home }}/.ssh"
     state: directory
     owner: "{{ user }}"
     group: "{{ user }}"
