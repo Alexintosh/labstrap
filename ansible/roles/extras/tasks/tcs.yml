@@ -7,6 +7,8 @@
     set -euo pipefail
     export NVM_DIR="${HOME}/.nvm"
     . "${NVM_DIR}/nvm.sh"
+    export NPM_CONFIG_PREFIX="${HOME}/.npm-global"
+    export npm_config_prefix="${HOME}/.npm-global"
     if "${HOME}/.npm-global/bin/tsc" --version >/dev/null 2>&1; then
       echo "present"
     else

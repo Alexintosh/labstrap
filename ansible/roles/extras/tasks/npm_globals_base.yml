@@ -17,18 +17,15 @@
     group: "{{ user }}"
     mode: "0755"
 
-- name: Configure npm global prefix for provisioning user
-  ansible.builtin.shell: |
-    set -euo pipefail
-    export NVM_DIR="${HOME}/.nvm"
-    . "${NVM_DIR}/nvm.sh"
-    npm config set prefix "${HOME}/.npm-global"
-  args:
-    executable: /bin/bash
-  changed_when: false
-  become_user: "{{ user }}"
-  environment:
-    HOME: "{{ labstrap_user_home }}"
+- name: Remove npm prefix/globalconfig overrides incompatible with nvm
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.npmrc"
+    regexp: '^\s*(prefix|globalconfig)\s*=.*$'
+    state: absent
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
 
 - name: Ensure npm global prefix is exported in .zshrc
   ansible.builtin.lineinfile:
