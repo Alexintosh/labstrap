@@ -1,0 +1,22 @@
+---
+- name: Prepare npm globals for claude code
+  ansible.builtin.include_tasks: npm_globals_base.yml
+
+- name: Install Claude Code CLI
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export NVM_DIR="${HOME}/.nvm"
+    . "${NVM_DIR}/nvm.sh"
+    if "${HOME}/.npm-global/bin/claude" --version >/dev/null 2>&1; then
+      echo "present"
+    else
+      npm install -g @anthropic-ai/claude-code
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: claude_install
+  changed_when: "'installed' in (claude_install.stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

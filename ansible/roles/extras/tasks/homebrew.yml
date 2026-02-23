@@ -1,0 +1,41 @@
+---
+- name: Ensure package dependencies for Homebrew are present
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - ca-certificates
+      - curl
+      - file
+      - git
+    state: present
+    update_cache: true
+
+- name: Check for user Homebrew installation
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+  register: user_brew_binary
+
+- name: Install Homebrew for the provisioning user
+  ansible.builtin.shell: |
+    set -euo pipefail
+    NONINTERACTIVE=1 CI=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  args:
+    executable: /bin/bash
+    creates: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Install global Homebrew profile script
+  ansible.builtin.copy:
+    dest: /etc/profile.d/homebrew.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Added by labstrap
+      if [ -x "{{ labstrap_user_home }}/.linuxbrew/bin/brew" ]; then
+        eval "$({{ labstrap_user_home }}/.linuxbrew/bin/brew shellenv)"
+      elif [ -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      fi

@@ -1,0 +1,20 @@
+---
+- name: Labstrap local provisioning
+  hosts: local
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../defaults/config.yml
+  vars:
+    labstrap_action: "{{ labstrap_action | default('init') }}"
+    extras_component: "{{ extras_component | default('all') }}"
+
+  roles:
+    - role: base
+      when: labstrap_action == 'init'
+
+    - role: hardening
+      when: labstrap_action == 'harden'
+
+    - role: extras
+      when: labstrap_action == 'extras'

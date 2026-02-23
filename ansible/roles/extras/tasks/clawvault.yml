@@ -1,0 +1,22 @@
+---
+- name: Prepare npm globals for clawvault
+  ansible.builtin.include_tasks: npm_globals_base.yml
+
+- name: Install clawvault
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export NVM_DIR="${HOME}/.nvm"
+    . "${NVM_DIR}/nvm.sh"
+    if "${HOME}/.npm-global/bin/clawvault" --version >/dev/null 2>&1; then
+      echo "present"
+    else
+      npm install -g clawvault
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: clawvault_install
+  changed_when: "'installed' in (clawvault_install.stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

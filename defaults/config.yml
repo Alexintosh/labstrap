@@ -1,0 +1,45 @@
+user: lab
+
+ssh:
+  port: 22222
+  allow_root: false
+  password_auth: false
+
+firewall:
+  enabled: true
+  tailscale_only: true
+  allow_lan_ssh: false
+
+tailscale:
+  required: true
+  enable_ssh: false
+
+extras:
+  homebrew: true
+  dokploy: true
+  zsh: true
+  ohmyzsh: true
+  starship: true
+  yazi: true
+  node: true
+  codex: true
+  claudecode: true
+  kimi: true
+  camoufox: true
+  cargo: true
+  pm2: true
+  pnpm: true
+  tcs: true
+  tsx: true
+  openclaw: true
+  clawvault: true
+  bun: true
+  whisper: true
+  rbw: true
+  dotfiles: true
+
+dokploy:
+  version: latest
+
+openclaw:
+  version: latest

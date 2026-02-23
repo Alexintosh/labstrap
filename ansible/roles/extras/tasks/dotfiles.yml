@@ -1,0 +1,38 @@
+---
+- name: Ensure Oh My Zsh custom plugin directory exists for dotfiles
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.oh-my-zsh/custom/plugins"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Ensure required Oh My Zsh plugins exist for dotfiles
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ labstrap_user_home }}/.oh-my-zsh/custom/plugins/{{ item.name }}"
+    version: master
+    update: true
+  loop:
+    - name: zsh-autosuggestions
+      repo: https://github.com/zsh-users/zsh-autosuggestions.git
+    - name: zsh-syntax-highlighting
+      repo: https://github.com/zsh-users/zsh-syntax-highlighting.git
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Overwrite .zshrc from canonical dotfiles source
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/Alexintosh/dotfiles/main/zshrc/.zshrc
+    dest: "{{ labstrap_user_home }}/.zshrc"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+    force: true
+
+- name: Ensure .zshrc ownership remains user-owned
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    owner: "{{ user }}"
+    group: "{{ user }}"

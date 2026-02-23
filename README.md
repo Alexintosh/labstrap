@@ -1,0 +1,203 @@
+# labstrap
+
+`labstrap` is a phase-based, idempotent, local-only CLI for provisioning and hardening fresh Ubuntu-family installs (including Zorin OS) with no cloud-init and no remote controller.
+
+## Design Guarantees
+
+- Local execution only (`ansible_connection=local`)
+- Idempotent phases
+- Re-runnable after partial failure
+- Safe SSH hardening order to reduce lockout risk
+- No interactive prompts during provisioning
+- Inspectable Bash + Ansible implementation
+- Structured JSONL logging for every phase/task step
+
+## Project Layout
+
+```text
+labstrap/
+├── labstrap
+├── install.sh
+├── ansible/
+│   ├── playbook.yml
+│   ├── inventory.ini
+│   ├── roles/
+│   │   ├── base/
+│   │   ├── hardening/
+│   │   └── extras/
+├── defaults/
+│   └── config.yml
+├── checks/
+│   └── preflight.sh
+└── README.md
+```
+
+## Install
+
+```bash
+sudo ./install.sh
+```
+
+This installs:
+
+- dependencies (including `ansible`)
+- project files to `/opt/labstrap`
+- command symlink at `/usr/local/bin/labstrap`
+
+## Commands
+
+```bash
+labstrap init
+labstrap harden
+labstrap extras [component|all]
+labstrap allow-key <path_to_pubkey>
+labstrap status
+```
+
+Every command emits JSON lines to stdout and also writes a JSONL file under `/var/log/labstrap` (fallback `/tmp/labstrap`).
+Set `LABSTRAP_LOG_DIR` to override the log directory.
+
+## Phase Behavior
+
+### `init`
+
+- Verifies Ubuntu-based OS
+- Creates provisioning user
+- Configures sudo for that user
+- Installs required base packages
+- Does not modify SSH daemon config
+- Does not apply restrictive firewall SSH policy
+
+### `harden`
+
+Execution order is enforced:
+
+1. Ensure SSH key(s) exist
+2. Install Tailscale
+3. Bring up Tailscale with Tailscale SSH disabled
+4. Allow firewall traffic on `tailscale0`
+5. Remove non-Tailscale SSH access
+6. Change SSH port and enforce key auth settings
+7. Restart SSH
+8. Verify service/listener/firewall state
+9. Disable root SSH login
+
+### `extras`
+
+Supported components:
+
+- `homebrew`
+- `dokploy`
+- `zsh`
+- `ohmyzsh`
+- `starship`
+- `yazi`
+- `node`
+- `codex`
+- `claudecode`
+- `kimi`
+- `camoufox`
+- `cargo`
+- `pm2`
+- `pnpm`
+- `tcs`
+- `tsx`
+- `openclaw`
+- `clawvault`
+- `bun`
+- `whisper`
+- `rbw`
+- `dotfiles`
+- `all`
+
+Each component is independently idempotent.
+
+`tcs` installs TypeScript and provides a `tcs` wrapper that delegates to `tsc`.
+`codex`, `claudecode`, `pm2`, `pnpm`, `tcs`, `tsx`, and `clawvault` depend on the `node` component.
+
+### `allow-key`
+
+- Appends one public key to configured user
+- Deduplicates existing key lines
+- Enforces `.ssh` and `authorized_keys` permissions
+- No service restart
+
+### `status`
+
+Verifies:
+
+- SSH service and configured listener port
+- UFW active and `tailscale0` allowance
+- Tailscale connected
+- Key service state (`ssh`, `fail2ban`, `tailscaled`)
+- Enabled extras presence
+
+## Configuration
+
+Default config lives at:
+
+- `/opt/labstrap/defaults/config.yml` (installed)
+- `defaults/config.yml` (source)
+
+Override path at runtime by setting `LABSTRAP_CONFIG`.
+
+Dokploy version is configurable via `dokploy.version` (default: `latest`).
+OpenClaw version is configurable via `openclaw.version` (default: `latest`).
+
+## Expected Workflow
+
+```bash
+sudo ./install.sh
+sudo labstrap init
+sudo labstrap harden
+sudo labstrap extras all
+sudo reboot
+```
+
+After reboot, SSH should be reachable through Tailscale according to config policy.
+
+## VM Smoke Test
+
+Use the automated Multipass smoke test to create a fresh VM, run provisioning, and validate structured logs:
+
+```bash
+./tests/vm-smoke.sh
+```
+
+The default VM disk is `80G` because `extras all` installs many large toolchains.
+
+Optional hardening run (requires Tailscale first-run auth flow):
+
+```bash
+./tests/vm-smoke.sh --with-harden
+```
+
+Keep the VM after test for debugging:
+
+```bash
+./tests/vm-smoke.sh --keep --name labstrap-debug
+```
+
+## Lume VM Smoke Test
+
+Use the separate Lume smoke test when running on Apple Silicon macOS:
+
+```bash
+./tests/lume-vm-smoke.sh
+```
+
+Examples:
+
+```bash
+# Use unattended Setup Assistant preset during creation
+./tests/lume-vm-smoke.sh --unattended tahoe
+
+# Keep VM for debugging
+./tests/lume-vm-smoke.sh --keep --name labstrap-lume-debug
+```
+
+Notes:
+
+- Requires macOS on Apple Silicon (`arm64`)
+- Uses Lume's documented create/run flow with `--ipsw latest` by default
+- Installs Lume automatically unless `--skip-install` is set

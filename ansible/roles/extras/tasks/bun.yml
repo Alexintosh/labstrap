@@ -1,0 +1,27 @@
+---
+- name: Install bun in user space
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -fsSL https://bun.sh/install | bash
+  args:
+    executable: /bin/bash
+    creates: "{{ labstrap_user_home }}/.bun/bin/bun"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure bun install location is defined in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export BUN_INSTALL="$HOME/.bun"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Ensure bun path is in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export PATH="$BUN_INSTALL/bin:$PATH"'
+    state: present

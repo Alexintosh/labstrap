@@ -1,0 +1,33 @@
+---
+- name: Ensure package dependencies for whisper are present
+  ansible.builtin.apt:
+    name:
+      - ffmpeg
+      - python3-venv
+    state: present
+    update_cache: true
+
+- name: Ensure whisper virtualenv parent directory exists
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.venvs"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Install openai-whisper in dedicated virtualenv
+  ansible.builtin.pip:
+    name: openai-whisper
+    state: present
+    virtualenv: "{{ labstrap_user_home }}/.venvs/whisper"
+    virtualenv_command: python3 -m venv
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure whisper wrapper symlink exists
+  ansible.builtin.file:
+    src: "{{ labstrap_user_home }}/.venvs/whisper/bin/whisper"
+    dest: /usr/local/bin/whisper
+    state: link
+    force: true

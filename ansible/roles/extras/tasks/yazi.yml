@@ -1,0 +1,45 @@
+---
+- name: Check user Homebrew binary for yazi install
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+  register: yazi_user_brew_binary
+
+- name: Check global Homebrew binary for yazi install
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/brew
+  register: yazi_global_brew_binary
+
+- name: Select Homebrew binary for yazi install
+  ansible.builtin.set_fact:
+    yazi_brew_bin: >-
+      {{ labstrap_user_home + '/.linuxbrew/bin/brew'
+         if yazi_user_brew_binary.stat.exists else
+         ('/home/linuxbrew/.linuxbrew/bin/brew'
+          if yazi_global_brew_binary.stat.exists else '') }}
+
+- name: Fail if Homebrew is missing for yazi component
+  ansible.builtin.fail:
+    msg: "Homebrew is required for yazi. Run 'labstrap extras homebrew' first."
+  when: yazi_brew_bin == ''
+
+- name: Install yazi and common dependencies via Homebrew
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if "{{ yazi_brew_bin }}" list --versions "{{ item }}" >/dev/null; then
+      echo "present"
+    else
+      "{{ yazi_brew_bin }}" install "{{ item }}"
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  loop:
+    - yazi
+    - fd
+    - ripgrep
+    - fzf
+    - zoxide
+  changed_when: "'installed' in (stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

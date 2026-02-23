@@ -1,0 +1,41 @@
+---
+- name: Install nvm
+  ansible.builtin.git:
+    repo: https://github.com/nvm-sh/nvm.git
+    dest: "{{ labstrap_user_home }}/.nvm"
+    version: v0.40.3
+    update: true
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure nvm init line exists in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export NVM_DIR="$HOME/.nvm"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Ensure nvm source line exists in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
+    state: present
+
+- name: Install Node LTS and set default alias
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export NVM_DIR="${HOME}/.nvm"
+    . "${NVM_DIR}/nvm.sh"
+    nvm install --lts
+    nvm alias default 'lts/*'
+  args:
+    executable: /bin/bash
+  register: nvm_install
+  changed_when: "'is already installed' not in nvm_install.stdout"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

@@ -1,0 +1,67 @@
+---
+- name: Read os-release for Ubuntu-family verification
+  ansible.builtin.slurp:
+    path: /etc/os-release
+  register: os_release_raw
+
+- name: Decode os-release
+  ansible.builtin.set_fact:
+    os_release_text: "{{ os_release_raw.content | b64decode }}"
+
+- name: Ensure host is Ubuntu-based
+  ansible.builtin.assert:
+    that:
+      - "'ID=ubuntu' in os_release_text or ('ID_LIKE=' in os_release_text and 'ubuntu' in (os_release_text | lower))"
+    fail_msg: "labstrap supports Ubuntu-based systems only."
+    success_msg: "Ubuntu-based system detected."
+
+- name: Install base system packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - git
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - python3
+      - python3-apt
+    state: present
+    update_cache: true
+
+- name: Ensure provisioning user exists
+  ansible.builtin.user:
+    name: "{{ user }}"
+    shell: /bin/bash
+    groups: sudo
+    append: true
+    create_home: true
+    state: present
+
+- name: Ensure user has an SSH directory
+  ansible.builtin.file:
+    path: "/home/{{ user }}/.ssh"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0700"
+
+- name: Configure passwordless sudo for provisioning user
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/90-labstrap-{{ user }}"
+    owner: root
+    group: root
+    mode: "0440"
+    content: "{{ user }} ALL=(ALL:ALL) NOPASSWD:ALL\n"
+    validate: "/usr/sbin/visudo -cf %s"
+
+- name: Ensure fail2ban is enabled
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true
+
+- name: Ensure unattended-upgrades service is enabled
+  ansible.builtin.service:
+    name: unattended-upgrades
+    state: started
+    enabled: true

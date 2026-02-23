@@ -1,0 +1,33 @@
+---
+- name: Install Oh My Zsh framework
+  ansible.builtin.git:
+    repo: https://github.com/ohmyzsh/ohmyzsh.git
+    dest: "{{ labstrap_user_home }}/.oh-my-zsh"
+    version: master
+    update: true
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure Oh My Zsh custom plugin directory exists
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.oh-my-zsh/custom/plugins"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Ensure required Oh My Zsh plugins are installed
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ labstrap_user_home }}/.oh-my-zsh/custom/plugins/{{ item.name }}"
+    version: master
+    update: true
+  loop:
+    - name: zsh-autosuggestions
+      repo: https://github.com/zsh-users/zsh-autosuggestions.git
+    - name: zsh-syntax-highlighting
+      repo: https://github.com/zsh-users/zsh-syntax-highlighting.git
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

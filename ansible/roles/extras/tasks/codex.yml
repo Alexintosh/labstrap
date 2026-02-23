@@ -1,0 +1,22 @@
+---
+- name: Prepare npm globals for codex
+  ansible.builtin.include_tasks: npm_globals_base.yml
+
+- name: Install Codex CLI
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export NVM_DIR="${HOME}/.nvm"
+    . "${NVM_DIR}/nvm.sh"
+    if "${HOME}/.npm-global/bin/codex" --version >/dev/null 2>&1; then
+      echo "present"
+    else
+      npm install -g @openai/codex
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: codex_install
+  changed_when: "'installed' in (codex_install.stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

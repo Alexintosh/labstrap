@@ -1,0 +1,178 @@
+---
+- name: "1. Ensure at least one SSH key exists for target user"
+  ansible.builtin.command: "awk 'NF && $1 !~ /^#/' /home/{{ user }}/.ssh/authorized_keys"
+  register: authorized_keys_check
+  changed_when: false
+  failed_when: authorized_keys_check.rc != 0 or (authorized_keys_check.stdout_lines | length) < 1
+
+- name: "2. Check whether Tailscale is already installed"
+  ansible.builtin.stat:
+    path: /usr/bin/tailscale
+  register: tailscale_binary
+
+- name: "2. Install Tailscale via official installer"
+  ansible.builtin.shell: "curl -fsSL https://tailscale.com/install.sh | sh"
+  args:
+    executable: /bin/bash
+  when: not tailscale_binary.stat.exists
+
+- name: "2. Ensure tailscaled service is enabled and running"
+  ansible.builtin.service:
+    name: tailscaled
+    state: started
+    enabled: true
+
+- name: "3. Bring up Tailscale with Tailscale SSH disabled"
+  ansible.builtin.command: tailscale up --ssh=false
+  register: tailscale_up
+  changed_when: false
+  failed_when: false
+
+- name: "3. Verify Tailscale is connected"
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_status
+  changed_when: false
+  failed_when: false
+
+- name: "3. Fail when Tailscale is required but not running"
+  ansible.builtin.fail:
+    msg: >-
+      Tailscale is not active. Complete first-run auth, then re-run 'labstrap harden'.
+      tailscale up output: {{ tailscale_up.stdout | default('') }} {{ tailscale_up.stderr | default('') }}
+  when:
+    - tailscale.required | bool
+    - tailscale_status.rc != 0 or not ((tailscale_status.stdout | default('')) is search('\"BackendState\"\\s*:\\s*\"Running\"'))
+
+- name: "4. Set default firewall incoming policy to deny"
+  ansible.builtin.command: ufw default deny incoming
+  changed_when: false
+  when: firewall.enabled | bool
+
+- name: "4. Set default firewall outgoing policy to allow"
+  ansible.builtin.command: ufw default allow outgoing
+  changed_when: false
+  when: firewall.enabled | bool
+
+- name: "4. Allow all inbound traffic on tailscale0"
+  ansible.builtin.command: ufw allow in on tailscale0
+  register: ufw_allow_tailscale_in
+  changed_when: "'Skipping adding existing rule' not in ufw_allow_tailscale_in.stdout"
+  when: firewall.enabled | bool
+
+- name: "4. Allow all outbound traffic on tailscale0"
+  ansible.builtin.command: ufw allow out on tailscale0
+  register: ufw_allow_tailscale_out
+  changed_when: "'Skipping adding existing rule' not in ufw_allow_tailscale_out.stdout"
+  when: firewall.enabled | bool
+
+- name: "4. Enable UFW"
+  ansible.builtin.command: ufw --force enable
+  register: ufw_enable
+  changed_when: "'already enabled' not in (((ufw_enable.stdout | default('')) | lower) + ((ufw_enable.stderr | default('')) | lower))"
+  when: firewall.enabled | bool
+
+- name: "5. Remove generic OpenSSH firewall allowance"
+  ansible.builtin.command: ufw --force delete allow OpenSSH
+  register: ufw_delete_openssh
+  changed_when: "'Could not delete non-existent rule' not in ((ufw_delete_openssh.stdout | default('')) + (ufw_delete_openssh.stderr | default('')))"
+  failed_when: false
+  when:
+    - firewall.enabled | bool
+    - firewall.tailscale_only | bool
+
+- name: "5. Remove SSH rule on port 22"
+  ansible.builtin.command: ufw --force delete allow 22/tcp
+  register: ufw_delete_22
+  changed_when: "'Could not delete non-existent rule' not in ((ufw_delete_22.stdout | default('')) + (ufw_delete_22.stderr | default('')))"
+  failed_when: false
+  when:
+    - firewall.enabled | bool
+    - firewall.tailscale_only | bool
+
+- name: "5. Remove SSH rule on configured port"
+  ansible.builtin.command: "ufw --force delete allow {{ ssh.port }}/tcp"
+  register: ufw_delete_configured_port
+  changed_when: "'Could not delete non-existent rule' not in ((ufw_delete_configured_port.stdout | default('')) + (ufw_delete_configured_port.stderr | default('')))"
+  failed_when: false
+  when:
+    - firewall.enabled | bool
+    - firewall.tailscale_only | bool
+
+- name: "5. Optionally allow LAN SSH from RFC1918 ranges"
+  ansible.builtin.command: "ufw allow from {{ item }} to any port {{ ssh.port }} proto tcp"
+  loop:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  changed_when: "'Skipping adding existing rule' not in (stdout | default(''))"
+  when:
+    - firewall.enabled | bool
+    - firewall.allow_lan_ssh | bool
+
+- name: "6. Configure SSH port"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port\\s+'
+    line: "Port {{ ssh.port }}"
+    create: false
+  notify: restart ssh
+
+- name: "6. Configure SSH password authentication"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication\\s+'
+    line: "PasswordAuthentication {{ 'yes' if ssh.password_auth | bool else 'no' }}"
+    create: false
+  notify: restart ssh
+
+- name: "6. Ensure public key authentication is enabled"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PubkeyAuthentication\\s+'
+    line: 'PubkeyAuthentication yes'
+    create: false
+  notify: restart ssh
+
+- name: "6. Validate SSH daemon configuration"
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+- name: "7. Restart SSH if configuration changed"
+  ansible.builtin.meta: flush_handlers
+
+- name: "8. Ensure ssh service is active"
+  ansible.builtin.command: systemctl is-active --quiet ssh
+  changed_when: false
+
+- name: "8. Ensure SSH is listening on configured port"
+  ansible.builtin.shell: "ss -ltn | awk '{print $4}' | grep -Eq '[:.]{{ ssh.port }}$'"
+  args:
+    executable: /bin/bash
+  register: ssh_listener
+  changed_when: false
+  failed_when: ssh_listener.rc != 0
+
+- name: "8. Verify UFW is active"
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+  when: firewall.enabled | bool
+
+- name: "8. Ensure tailscale0 firewall allowance exists"
+  ansible.builtin.assert:
+    that:
+      - "'Status: active' in ufw_status.stdout"
+      - "'tailscale0' in ufw_status.stdout"
+    fail_msg: "UFW is not active or missing tailscale0 allowance."
+  when: firewall.enabled | bool
+
+- name: "9. Disable root SSH login"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin\\s+'
+    line: "PermitRootLogin {{ 'yes' if ssh.allow_root | bool else 'no' }}"
+    create: false
+  notify: restart ssh
+
+- name: "9. Restart SSH after root login setting"
+  ansible.builtin.meta: flush_handlers

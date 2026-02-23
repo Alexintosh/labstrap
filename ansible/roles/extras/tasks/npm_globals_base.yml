@@ -1,0 +1,47 @@
+---
+- name: Check for nvm installation
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.nvm/nvm.sh"
+  register: npm_globals_nvm
+
+- name: Fail when Node runtime is unavailable for npm-based components
+  ansible.builtin.fail:
+    msg: "Node runtime is required. Run 'labstrap extras node' first."
+  when: not npm_globals_nvm.stat.exists
+
+- name: Ensure npm global prefix directory exists
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.npm-global/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Configure npm global prefix for provisioning user
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export NVM_DIR="${HOME}/.nvm"
+    . "${NVM_DIR}/nvm.sh"
+    npm config set prefix "${HOME}/.npm-global"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure npm global prefix is exported in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export NPM_CONFIG_PREFIX="$HOME/.npm-global"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Ensure npm global bin path is exported in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"'
+    state: present

@@ -1,0 +1,62 @@
+---
+- name: Ensure local user bin directory exists for openclaw
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Check openclaw installation under ~/.openclaw
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.openclaw/bin/openclaw"
+  register: openclaw_user_binary
+
+- name: Check openclaw installation under npm global bin
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.npm-global/bin/openclaw"
+  register: openclaw_npm_binary
+
+- name: Install openclaw CLI (non-interactive)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl --proto '=https' --tlsv1.2 -fsSL https://openclaw.ai/install-cli.sh | bash -s -- --prefix "${HOME}/.openclaw" --version "{{ openclaw.version | default('latest') }}" --no-onboard
+  args:
+    executable: /bin/bash
+  when: not openclaw_user_binary.stat.exists and not openclaw_npm_binary.stat.exists
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure openclaw bin path is exported in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export PATH="$HOME/.openclaw/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Ensure local user bin path is exported in .zshrc for openclaw
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Ensure openclaw wrapper exists in ~/.local/bin
+  ansible.builtin.copy:
+    dest: "{{ labstrap_user_home }}/.local/bin/openclaw"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      if [ -x "$HOME/.openclaw/bin/openclaw" ]; then
+        exec "$HOME/.openclaw/bin/openclaw" "$@"
+      fi
+      exec "$HOME/.npm-global/bin/openclaw" "$@"

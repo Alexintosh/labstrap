@@ -1,0 +1,482 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+resolve_script_path() {
+  local source_path="${BASH_SOURCE[0]}"
+  while [[ -h "$source_path" ]]; do
+    local source_dir
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    source_path="$(readlink "$source_path")"
+    [[ "$source_path" != /* ]] && source_path="$source_dir/$source_path"
+  done
+  cd -P "$(dirname "$source_path")" && pwd
+}
+
+ROOT_DIR="$(resolve_script_path)"
+ANSIBLE_DIR="$ROOT_DIR/ansible"
+PRECHECK_SCRIPT="$ROOT_DIR/checks/preflight.sh"
+DEFAULT_CONFIG="$ROOT_DIR/defaults/config.yml"
+CONFIG_PATH="${LABSTRAP_CONFIG:-$DEFAULT_CONFIG}"
+LABSTRAP_LOG_FILE="${LABSTRAP_LOG_FILE:-}"
+LOG_COMMAND=""
+
+json_escape() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+log_event() {
+  local level="$1"
+  local event="$2"
+  local message="$3"
+  shift 3 || true
+
+  local ts
+  local json
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  json="{\"timestamp\":\"$ts\",\"level\":\"$(json_escape "$level")\",\"event\":\"$(json_escape "$event")\",\"command\":\"$(json_escape "$LOG_COMMAND")\",\"message\":\"$(json_escape "$message")\""
+
+  while [[ "$#" -ge 2 ]]; do
+    local key="$1"
+    local value="$2"
+    shift 2
+    json="$json,\"$(json_escape "$key")\":\"$(json_escape "$value")\""
+  done
+  json="$json}"
+
+  printf '%s\n' "$json"
+  if [[ -n "$LABSTRAP_LOG_FILE" ]]; then
+    printf '%s\n' "$json" >> "$LABSTRAP_LOG_FILE" || true
+  fi
+}
+
+init_logging() {
+  local command_name="$1"
+  local configured_dir="${LABSTRAP_LOG_DIR:-/var/log/labstrap}"
+  local log_dir="$configured_dir"
+  local timestamp
+
+  if ! mkdir -p "$log_dir" >/dev/null 2>&1; then
+    log_dir="/tmp/labstrap"
+    mkdir -p "$log_dir"
+  fi
+
+  timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+  LABSTRAP_LOG_FILE="$log_dir/${timestamp}-${command_name:-unknown}-$$.jsonl"
+  : > "$LABSTRAP_LOG_FILE"
+  export LABSTRAP_LOG_FILE
+
+  log_event "INFO" "log.start" "Structured logging initialized" "log_file" "$LABSTRAP_LOG_FILE"
+}
+
+print_usage() {
+  cat <<USAGE
+Usage:
+  labstrap init
+  labstrap harden
+  labstrap extras [component|all]
+  labstrap allow-key <path_to_pubkey>
+  labstrap status
+USAGE
+}
+
+banner() {
+  echo
+  echo "== $1 =="
+}
+
+require_root() {
+  if [[ "$EUID" -ne 0 ]]; then
+    log_event "ERROR" "auth.not_root" "Command requires sudo/root"
+    echo "ERROR: This command must be run with sudo/root." >&2
+    exit 1
+  fi
+}
+
+require_command() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1 || {
+    log_event "ERROR" "dependency.missing" "Required command not found" "dependency" "$cmd"
+    echo "ERROR: Missing required command: $cmd" >&2
+    exit 1
+  }
+}
+
+config_value() {
+  local key="$1"
+  awk -v key="$key" '$1 == key":" {print $2; exit}' "$CONFIG_PATH"
+}
+
+config_nested_value() {
+  local section="$1"
+  local key="$2"
+  awk -v section="$section" -v key="$key" '
+    $0 ~ "^" section ":[[:space:]]*$" {in_section=1; next}
+    in_section && $0 ~ "^[^[:space:]]" {in_section=0}
+    in_section && $1 == key":" {print $2; exit}
+  ' "$CONFIG_PATH"
+}
+
+run_preflight() {
+  local phase="$1"
+  log_event "INFO" "preflight.start" "Running preflight checks" "phase" "$phase"
+  if LABSTRAP_CONFIG="$CONFIG_PATH" LABSTRAP_LOG_FILE="$LABSTRAP_LOG_FILE" "$PRECHECK_SCRIPT" "$phase"; then
+    log_event "INFO" "preflight.success" "Preflight checks passed" "phase" "$phase"
+    return 0
+  fi
+
+  log_event "ERROR" "preflight.failed" "Preflight checks failed" "phase" "$phase"
+  return 1
+}
+
+run_ansible_phase() {
+  local action="$1"
+  shift || true
+
+  require_command ansible-playbook
+  log_event "INFO" "ansible.start" "Starting ansible phase" "phase" "$action"
+
+  local args=(
+    -i "$ANSIBLE_DIR/inventory.ini"
+    "$ANSIBLE_DIR/playbook.yml"
+    -e "labstrap_action=$action"
+    -e "@$CONFIG_PATH"
+  )
+
+  if [[ "$action" == "extras" ]]; then
+    local component="${1:-all}"
+    args+=( -e "extras_component=$component" )
+  fi
+
+  if ANSIBLE_CALLBACK_PLUGINS="$ANSIBLE_DIR/callback_plugins${ANSIBLE_CALLBACK_PLUGINS:+:$ANSIBLE_CALLBACK_PLUGINS}" \
+     ANSIBLE_STDOUT_CALLBACK=labstrap_jsonl \
+     ANSIBLE_LOAD_CALLBACK_PLUGINS=1 \
+     LABSTRAP_LOG_FILE="$LABSTRAP_LOG_FILE" \
+     LABSTRAP_LOG_COMMAND="$LOG_COMMAND" \
+     LABSTRAP_PHASE="$action" \
+     ansible-playbook "${args[@]}"; then
+    log_event "INFO" "ansible.success" "Ansible phase completed" "phase" "$action"
+    return 0
+  fi
+
+  log_event "ERROR" "ansible.failed" "Ansible phase failed" "phase" "$action"
+  return 1
+}
+
+run_allow_key() {
+  local key_file="$1"
+  local user_name
+  local home_dir
+  local key_line
+
+  log_event "INFO" "allow_key.start" "Processing SSH public key" "key_path" "$key_file"
+
+  [[ -f "$key_file" ]] || {
+    log_event "ERROR" "allow_key.invalid_path" "Public key file not found" "key_path" "$key_file"
+    echo "ERROR: Public key file not found: $key_file" >&2
+    exit 1
+  }
+
+  key_line="$(awk 'NF {print; exit}' "$key_file")"
+  [[ -n "$key_line" ]] || {
+    log_event "ERROR" "allow_key.empty_key" "Public key file is empty" "key_path" "$key_file"
+    echo "ERROR: Public key file is empty: $key_file" >&2
+    exit 1
+  }
+
+  case "$key_line" in
+    ssh-*|ecdsa-*|sk-*) ;;
+    *)
+      log_event "ERROR" "allow_key.invalid_format" "Public key format appears invalid" "key_path" "$key_file"
+      echo "ERROR: File does not appear to contain a valid SSH public key." >&2
+      exit 1
+      ;;
+  esac
+
+  user_name="$(config_value user)"
+  [[ -n "$user_name" ]] || {
+    log_event "ERROR" "allow_key.config_missing_user" "Unable to read user from config"
+    echo "ERROR: Unable to read user from config." >&2
+    exit 1
+  }
+
+  home_dir="$(getent passwd "$user_name" | cut -d: -f6)"
+  [[ -n "$home_dir" && -d "$home_dir" ]] || {
+    log_event "ERROR" "allow_key.user_home_missing" "Target user home directory missing" "user" "$user_name"
+    echo "ERROR: Target user home directory not found for user '$user_name'." >&2
+    exit 1
+  }
+
+  install -d -m 0700 -o "$user_name" -g "$user_name" "$home_dir/.ssh"
+  touch "$home_dir/.ssh/authorized_keys"
+  chown "$user_name:$user_name" "$home_dir/.ssh/authorized_keys"
+  chmod 0600 "$home_dir/.ssh/authorized_keys"
+
+  if grep -qxF "$key_line" "$home_dir/.ssh/authorized_keys"; then
+    log_event "INFO" "allow_key.noop" "SSH key already present" "user" "$user_name"
+    echo "allow-key: key already present for user '$user_name'."
+    return
+  fi
+
+  printf '%s\n' "$key_line" >> "$home_dir/.ssh/authorized_keys"
+  chown "$user_name:$user_name" "$home_dir/.ssh/authorized_keys"
+  chmod 0600 "$home_dir/.ssh/authorized_keys"
+  log_event "INFO" "allow_key.added" "SSH key added" "user" "$user_name"
+  echo "allow-key: key added for user '$user_name'."
+}
+
+status_check() {
+  local label="$1"
+  local cmd="$2"
+
+  if bash -c "$cmd" >/dev/null 2>&1; then
+    log_event "INFO" "status.check" "Status check passed" "check" "$label" "result" "PASS"
+    echo "[PASS] $label"
+    return 0
+  fi
+
+  log_event "ERROR" "status.check" "Status check failed" "check" "$label" "result" "FAIL"
+  echo "[FAIL] $label"
+  return 1
+}
+
+run_status() {
+  local user_name
+  local ssh_port
+  local extras_homebrew
+  local extras_zsh
+  local extras_dokploy
+  local extras_starship
+  local extras_yazi
+  local extras_node
+  local extras_codex
+  local extras_claudecode
+  local extras_kimi
+  local extras_camoufox
+  local extras_cargo
+  local extras_pm2
+  local extras_pnpm
+  local extras_tcs
+  local extras_tsx
+  local extras_openclaw
+  local extras_clawvault
+  local extras_bun
+  local extras_whisper
+  local extras_rbw
+  local failures=0
+
+  user_name="$(config_value user)"
+  ssh_port="$(config_nested_value ssh port)"
+  extras_homebrew="$(config_nested_value extras homebrew)"
+  extras_zsh="$(config_nested_value extras zsh)"
+  extras_dokploy="$(config_nested_value extras dokploy)"
+  extras_starship="$(config_nested_value extras starship)"
+  extras_yazi="$(config_nested_value extras yazi)"
+  extras_node="$(config_nested_value extras node)"
+  extras_codex="$(config_nested_value extras codex)"
+  extras_claudecode="$(config_nested_value extras claudecode)"
+  extras_kimi="$(config_nested_value extras kimi)"
+  extras_camoufox="$(config_nested_value extras camoufox)"
+  extras_cargo="$(config_nested_value extras cargo)"
+  extras_pm2="$(config_nested_value extras pm2)"
+  extras_pnpm="$(config_nested_value extras pnpm)"
+  extras_tcs="$(config_nested_value extras tcs)"
+  extras_tsx="$(config_nested_value extras tsx)"
+  extras_openclaw="$(config_nested_value extras openclaw)"
+  extras_clawvault="$(config_nested_value extras clawvault)"
+  extras_bun="$(config_nested_value extras bun)"
+  extras_whisper="$(config_nested_value extras whisper)"
+  extras_rbw="$(config_nested_value extras rbw)"
+
+  [[ -n "$ssh_port" ]] || ssh_port="22222"
+
+  banner "labstrap status"
+
+  status_check "SSH service running" "systemctl is-active --quiet ssh" || failures=$((failures + 1))
+  status_check "SSH listening on port $ssh_port" "ss -ltn | awk '{print \$4}' | grep -Eq '[:.]$ssh_port$'" || failures=$((failures + 1))
+  status_check "UFW active" "ufw status | grep -q 'Status: active'" || failures=$((failures + 1))
+  status_check "UFW allows tailscale0" "ufw status | grep -q 'tailscale0'" || failures=$((failures + 1))
+  status_check "Tailscale is up" "tailscale status --json | grep -Eq '\"BackendState\"[[:space:]]*:[[:space:]]*\"Running\"'" || failures=$((failures + 1))
+  status_check "Service: fail2ban running" "systemctl is-active --quiet fail2ban" || failures=$((failures + 1))
+  status_check "Service: tailscaled running" "systemctl is-active --quiet tailscaled" || failures=$((failures + 1))
+
+  if [[ "$extras_homebrew" == "true" ]]; then
+    status_check "Extra: homebrew installed" "[[ -x /home/$user_name/.linuxbrew/bin/brew || -x /home/linuxbrew/.linuxbrew/bin/brew ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_zsh" == "true" ]]; then
+    status_check "Extra: zsh installed" "command -v zsh" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_dokploy" == "true" ]]; then
+    status_check "Extra: dokploy service exists" "docker service inspect dokploy >/dev/null 2>&1" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_starship" == "true" ]]; then
+    status_check "Extra: starship installed" "[[ -x /home/$user_name/.local/bin/starship ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_yazi" == "true" ]]; then
+    status_check "Extra: yazi installed" "[[ -x /home/$user_name/.linuxbrew/bin/yazi || -x /home/linuxbrew/.linuxbrew/bin/yazi ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_node" == "true" ]]; then
+    status_check "Extra: node LTS installed" "ls /home/$user_name/.nvm/versions/node/*/bin/node >/dev/null 2>&1" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_codex" == "true" ]]; then
+    status_check "Extra: codex installed" "[[ -x /home/$user_name/.npm-global/bin/codex ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_claudecode" == "true" ]]; then
+    status_check "Extra: claude code installed" "[[ -x /home/$user_name/.npm-global/bin/claude ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_kimi" == "true" ]]; then
+    status_check "Extra: kimi installed" "[[ -x /home/$user_name/.local/bin/kimi ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_camoufox" == "true" ]]; then
+    status_check "Extra: camoufox installed" "[[ -x /home/$user_name/.local/bin/camoufox ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_cargo" == "true" ]]; then
+    status_check "Extra: cargo installed" "[[ -x /home/$user_name/.cargo/bin/cargo ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_pm2" == "true" ]]; then
+    status_check "Extra: pm2 installed" "[[ -x /home/$user_name/.npm-global/bin/pm2 ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_pnpm" == "true" ]]; then
+    status_check "Extra: pnpm installed" "[[ -x /home/$user_name/.npm-global/bin/pnpm ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_tcs" == "true" ]]; then
+    status_check "Extra: tcs installed" "[[ -x /home/$user_name/.local/bin/tcs ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_tsx" == "true" ]]; then
+    status_check "Extra: tsx installed" "[[ -x /home/$user_name/.npm-global/bin/tsx ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_openclaw" == "true" ]]; then
+    status_check "Extra: openclaw installed" "[[ -x /home/$user_name/.local/bin/openclaw || -x /home/$user_name/.openclaw/bin/openclaw || -x /home/$user_name/.npm-global/bin/openclaw ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_clawvault" == "true" ]]; then
+    status_check "Extra: clawvault installed" "[[ -x /home/$user_name/.npm-global/bin/clawvault ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_bun" == "true" ]]; then
+    status_check "Extra: bun installed" "[[ -x /home/$user_name/.bun/bin/bun ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_whisper" == "true" ]]; then
+    status_check "Extra: whisper virtualenv installed" "[[ -x /home/$user_name/.venvs/whisper/bin/whisper && -L /usr/local/bin/whisper ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_rbw" == "true" ]]; then
+    status_check "Extra: rbw installed" "[[ -x /home/$user_name/.linuxbrew/bin/rbw || -x /home/linuxbrew/.linuxbrew/bin/rbw ]]" || failures=$((failures + 1))
+  fi
+
+  echo
+  if [[ "$failures" -eq 0 ]]; then
+    echo "status: OK"
+    return 0
+  fi
+
+  echo "status: FAIL ($failures checks failed)"
+  return 1
+}
+
+main() {
+  local command="${1:-}"
+  LOG_COMMAND="$command"
+  init_logging "$command"
+  log_event "INFO" "command.start" "Command execution started" "cmd_name" "${command:-<none>}"
+
+  [[ -f "$CONFIG_PATH" ]] || {
+    log_event "ERROR" "config.missing" "Configuration file not found" "config_path" "$CONFIG_PATH"
+    echo "ERROR: Missing configuration file: $CONFIG_PATH" >&2
+    exit 1
+  }
+
+  case "$command" in
+    init)
+      require_root
+      banner "Phase 1: init"
+      run_preflight init
+      run_ansible_phase init
+      ;;
+
+    harden)
+      require_root
+      banner "Phase 2: harden"
+      run_preflight harden
+      run_ansible_phase harden
+      ;;
+
+    extras)
+      require_root
+      local component="${2:-all}"
+      case "$component" in
+        all|homebrew|dokploy|zsh|ohmyzsh|starship|yazi|node|codex|claudecode|kimi|camoufox|cargo|pm2|pnpm|tcs|tsx|openclaw|clawvault|bun|whisper|rbw|dotfiles) ;;
+        *)
+          echo "ERROR: Invalid extras component '$component'." >&2
+          print_usage
+          exit 1
+          ;;
+      esac
+
+      banner "Phase 3: extras ($component)"
+      run_preflight extras
+      run_ansible_phase extras "$component"
+      ;;
+
+    allow-key)
+      require_root
+      local key_path="${2:-}"
+      [[ -n "$key_path" ]] || {
+        echo "ERROR: Missing key path." >&2
+        print_usage
+        exit 1
+      }
+
+      banner "allow-key"
+      run_preflight allow-key
+      run_allow_key "$key_path"
+      ;;
+
+    status)
+      run_status
+      ;;
+
+    -h|--help|help)
+      log_event "INFO" "command.help" "Displaying help output"
+      print_usage
+      ;;
+
+    "")
+      log_event "ERROR" "command.empty" "No command supplied"
+      print_usage
+      exit 1
+      ;;
+
+    *)
+      log_event "ERROR" "command.unknown" "Unknown command" "cmd_name" "$command"
+      echo "ERROR: Unknown command '$command'." >&2
+      print_usage
+      exit 1
+      ;;
+  esac
+
+  log_event "INFO" "command.success" "Command execution completed" "cmd_name" "$command"
+}
+
+main "$@"

@@ -1,0 +1,43 @@
+---
+- name: Check whether docker is available
+  ansible.builtin.command: docker info
+  register: dokploy_docker_info
+  changed_when: false
+  failed_when: false
+
+- name: Check whether Dokploy service already exists
+  ansible.builtin.command: docker service inspect dokploy
+  register: dokploy_service_inspect
+  changed_when: false
+  failed_when: false
+  when: dokploy_docker_info.rc == 0
+
+- name: Validate Dokploy install ports are free on first install
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for port in 80 443 3000; do
+      if ss -ltn | awk '{print $4}' | grep -Eq "[:.]${port}$"; then
+        echo "Port ${port} is already in use; Dokploy needs ports 80, 443, and 3000 on first install."
+        exit 1
+      fi
+    done
+  args:
+    executable: /bin/bash
+  when: dokploy_service_inspect.rc | default(1) != 0
+
+- name: Install Dokploy via official installer
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export DOKPLOY_VERSION="{{ dokploy.version | default('latest') }}"
+    curl -sSL https://dokploy.com/install.sh | sh
+  args:
+    executable: /bin/bash
+  when: dokploy_service_inspect.rc | default(1) != 0
+
+- name: Ensure Dokploy service exists after installation
+  ansible.builtin.command: docker service inspect dokploy
+  register: dokploy_verify
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: dokploy_verify.rc == 0

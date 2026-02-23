@@ -1,0 +1,40 @@
+---
+- name: Check user Homebrew binary for rbw install
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+  register: rbw_user_brew_binary
+
+- name: Check global Homebrew binary for rbw install
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/brew
+  register: rbw_global_brew_binary
+
+- name: Select Homebrew binary for rbw install
+  ansible.builtin.set_fact:
+    rbw_brew_bin: >-
+      {{ labstrap_user_home + '/.linuxbrew/bin/brew'
+         if rbw_user_brew_binary.stat.exists else
+         ('/home/linuxbrew/.linuxbrew/bin/brew'
+          if rbw_global_brew_binary.stat.exists else '') }}
+
+- name: Fail if Homebrew is missing for rbw component
+  ansible.builtin.fail:
+    msg: "Homebrew is required for rbw. Run 'labstrap extras homebrew' first."
+  when: rbw_brew_bin == ''
+
+- name: Install rbw via Homebrew
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if "{{ rbw_brew_bin }}" list --versions rbw >/dev/null; then
+      echo "present"
+    else
+      "{{ rbw_brew_bin }}" install rbw
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: rbw_install
+  changed_when: "'installed' in rbw_install.stdout"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

@@ -1,0 +1,65 @@
+---
+- name: Ensure system dependencies for camoufox are present
+  ansible.builtin.apt:
+    name:
+      - libgtk-3-0
+      - libx11-xcb1
+      - libasound2
+      - python3-venv
+    state: present
+    update_cache: true
+
+- name: Ensure local user bin directory exists for camoufox
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Install camoufox in dedicated virtualenv
+  ansible.builtin.pip:
+    name: "camoufox[geoip]"
+    state: present
+    virtualenv: "{{ labstrap_user_home }}/.venvs/camoufox"
+    virtualenv_command: python3 -m venv
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure camoufox CLI wrapper exists
+  ansible.builtin.copy:
+    dest: "{{ labstrap_user_home }}/.local/bin/camoufox"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      exec "$HOME/.venvs/camoufox/bin/python" -m camoufox "$@"
+
+- name: Ensure local user bin path is exported in .zshrc for camoufox
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Fetch camoufox browser assets when missing
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if "${HOME}/.venvs/camoufox/bin/python" -m camoufox path >/dev/null 2>&1; then
+      echo "present"
+    else
+      "${HOME}/.venvs/camoufox/bin/python" -m camoufox fetch
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: camoufox_fetch
+  changed_when: "'installed' in (camoufox_fetch.stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"

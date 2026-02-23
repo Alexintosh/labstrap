@@ -1,0 +1,166 @@
+---
+- name: Define extras component metadata
+  ansible.builtin.set_fact:
+    valid_extras_components:
+      - all
+      - homebrew
+      - dokploy
+      - zsh
+      - ohmyzsh
+      - starship
+      - yazi
+      - node
+      - codex
+      - claudecode
+      - kimi
+      - camoufox
+      - cargo
+      - pm2
+      - pnpm
+      - tcs
+      - tsx
+      - openclaw
+      - clawvault
+      - bun
+      - whisper
+      - rbw
+      - dotfiles
+    labstrap_user_home: "/home/{{ user }}"
+
+- name: Validate extras component selection
+  ansible.builtin.assert:
+    that:
+      - extras_component in valid_extras_components
+    fail_msg: "Invalid extras component '{{ extras_component }}'."
+
+- name: Run Homebrew component
+  ansible.builtin.include_tasks: homebrew.yml
+  when:
+    - extras.homebrew | bool
+    - extras_component in ['all', 'homebrew']
+
+- name: Run zsh component
+  ansible.builtin.include_tasks: zsh.yml
+  when:
+    - extras.zsh | bool
+    - extras_component in ['all', 'zsh']
+
+- name: Run dokploy component
+  ansible.builtin.include_tasks: dokploy.yml
+  when:
+    - extras.dokploy | bool
+    - extras_component in ['all', 'dokploy']
+
+- name: Run Oh My Zsh component
+  ansible.builtin.include_tasks: ohmyzsh.yml
+  when:
+    - extras.ohmyzsh | bool
+    - extras_component in ['all', 'ohmyzsh']
+
+- name: Run dotfiles component
+  ansible.builtin.include_tasks: dotfiles.yml
+  when:
+    - extras.dotfiles | bool
+    - extras_component in ['all', 'dotfiles']
+
+- name: Run starship component
+  ansible.builtin.include_tasks: starship.yml
+  when:
+    - extras.starship | bool
+    - extras_component in ['all', 'starship']
+
+- name: Run yazi component
+  ansible.builtin.include_tasks: yazi.yml
+  when:
+    - extras.yazi | bool
+    - extras_component in ['all', 'yazi']
+
+- name: Run node component
+  ansible.builtin.include_tasks: node.yml
+  when:
+    - extras.node | bool
+    - extras_component in ['all', 'node']
+
+- name: Run codex component
+  ansible.builtin.include_tasks: codex.yml
+  when:
+    - extras.codex | bool
+    - extras_component in ['all', 'codex']
+
+- name: Run claudecode component
+  ansible.builtin.include_tasks: claudecode.yml
+  when:
+    - extras.claudecode | bool
+    - extras_component in ['all', 'claudecode']
+
+- name: Run kimi component
+  ansible.builtin.include_tasks: kimi.yml
+  when:
+    - extras.kimi | bool
+    - extras_component in ['all', 'kimi']
+
+- name: Run camoufox component
+  ansible.builtin.include_tasks: camoufox.yml
+  when:
+    - extras.camoufox | bool
+    - extras_component in ['all', 'camoufox']
+
+- name: Run cargo component
+  ansible.builtin.include_tasks: cargo.yml
+  when:
+    - extras.cargo | bool
+    - extras_component in ['all', 'cargo']
+
+- name: Run pm2 component
+  ansible.builtin.include_tasks: pm2.yml
+  when:
+    - extras.pm2 | bool
+    - extras_component in ['all', 'pm2']
+
+- name: Run pnpm component
+  ansible.builtin.include_tasks: pnpm.yml
+  when:
+    - extras.pnpm | bool
+    - extras_component in ['all', 'pnpm']
+
+- name: Run tcs component
+  ansible.builtin.include_tasks: tcs.yml
+  when:
+    - extras.tcs | bool
+    - extras_component in ['all', 'tcs']
+
+- name: Run tsx component
+  ansible.builtin.include_tasks: tsx.yml
+  when:
+    - extras.tsx | bool
+    - extras_component in ['all', 'tsx']
+
+- name: Run openclaw component
+  ansible.builtin.include_tasks: openclaw.yml
+  when:
+    - extras.openclaw | bool
+    - extras_component in ['all', 'openclaw']
+
+- name: Run clawvault component
+  ansible.builtin.include_tasks: clawvault.yml
+  when:
+    - extras.clawvault | bool
+    - extras_component in ['all', 'clawvault']
+
+- name: Run bun component
+  ansible.builtin.include_tasks: bun.yml
+  when:
+    - extras.bun | bool
+    - extras_component in ['all', 'bun']
+
+- name: Run whisper component
+  ansible.builtin.include_tasks: whisper.yml
+  when:
+    - extras.whisper | bool
+    - extras_component in ['all', 'whisper']
+
+- name: Run rbw component
+  ansible.builtin.include_tasks: rbw.yml
+  when:
+    - extras.rbw | bool
+    - extras_component in ['all', 'rbw']

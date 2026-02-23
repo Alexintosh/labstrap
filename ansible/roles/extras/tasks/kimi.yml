@@ -1,0 +1,35 @@
+---
+- name: Ensure local user bin directory exists for kimi
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Install kimi CLI
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ -x "${HOME}/.local/bin/kimi" ]; then
+      echo "present"
+    else
+      curl -LsSf https://code.kimi.com/install.sh | bash
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: kimi_install
+  changed_when: "'installed' in (kimi_install.stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure local user bin path is exported in .zshrc for kimi
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.zshrc"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"

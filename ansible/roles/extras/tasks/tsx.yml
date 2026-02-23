@@ -1,0 +1,22 @@
+---
+- name: Prepare npm globals for tsx
+  ansible.builtin.include_tasks: npm_globals_base.yml
+
+- name: Install tsx
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export NVM_DIR="${HOME}/.nvm"
+    . "${NVM_DIR}/nvm.sh"
+    if "${HOME}/.npm-global/bin/tsx" --version >/dev/null 2>&1; then
+      echo "present"
+    else
+      npm install -g tsx
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: tsx_install
+  changed_when: "'installed' in (tsx_install.stdout | default(''))"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
