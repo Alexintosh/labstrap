@@ -1,4 +1,20 @@
 ---
+- name: "1. Ensure target user SSH directory exists"
+  ansible.builtin.file:
+    path: "/home/{{ user }}/.ssh"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0700"
+
+- name: "1. Ensure authorized_keys file exists"
+  ansible.builtin.file:
+    path: "/home/{{ user }}/.ssh/authorized_keys"
+    state: touch
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0600"
+
 - name: "1. Ensure at least one SSH key exists for target user"
   ansible.builtin.command: "awk 'NF && $1 !~ /^#/' /home/{{ user }}/.ssh/authorized_keys"
   register: authorized_keys_check
