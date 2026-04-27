@@ -56,7 +56,43 @@ require_file() {
 }
 
 get_config_user() {
-  awk '/^user:[[:space:]]*/ {print $2; exit}' "$CONFIG_PATH"
+  local value
+  value="$(awk '/^user:[[:space:]]*/ {print $2; exit}' "$CONFIG_PATH")"
+
+  if [[ -z "$value" || "$value" == "auto" ]]; then
+    detect_target_user
+    return
+  fi
+
+  printf '%s\n' "$value"
+}
+
+detect_target_user() {
+  local candidate
+
+  if [[ -n "${LABSTRAP_USER:-}" && "${LABSTRAP_USER:-}" != "root" ]]; then
+    printf '%s\n' "$LABSTRAP_USER"
+    return
+  fi
+
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+    printf '%s\n' "$SUDO_USER"
+    return
+  fi
+
+  candidate="$(logname 2>/dev/null || true)"
+  if [[ -n "$candidate" && "$candidate" != "root" ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  candidate="$(awk -F: '$3 >= 1000 && $3 < 65534 && $1 != "nobody" {print $1; exit}' /etc/passwd)"
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  return 1
 }
 
 check_os() {
@@ -134,8 +170,8 @@ main() {
 
   require_file "$CONFIG_PATH"
   local user_name
-  user_name="$(get_config_user)"
-  [[ -n "$user_name" ]] || fail "Unable to read 'user' from $CONFIG_PATH"
+  user_name="$(get_config_user || true)"
+  [[ -n "$user_name" ]] || fail "Unable to resolve target user. Set LABSTRAP_USER or configure 'user:' in $CONFIG_PATH."
 
   check_os
   check_root

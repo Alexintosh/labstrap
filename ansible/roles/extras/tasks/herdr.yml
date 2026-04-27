@@ -1,0 +1,69 @@
+---
+- name: Ensure local binary directory exists for herdr
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Ensure local user bin path is exported for herdr
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
+
+- name: Check whether herdr is already available
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="${HOME}/.local/bin:${PATH}"
+    command -v herdr >/dev/null 2>&1
+  args:
+    executable: /bin/bash
+  register: herdr_command_exists
+  changed_when: false
+  failed_when: false
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Install herdr
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="${HOME}/.local/bin:${PATH}"
+    curl -fsSL https://herdr.dev/install.sh | sh
+  args:
+    executable: /bin/bash
+  when: herdr_command_exists.rc != 0
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Resolve herdr command path after install
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="${HOME}/.local/bin:${PATH}"
+    command -v herdr
+  args:
+    executable: /bin/bash
+  register: herdr_command_path
+  changed_when: false
+  failed_when: false
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Fail when herdr command is missing
+  ansible.builtin.fail:
+    msg: >-
+      Herdr installation finished without producing the herdr command for {{ user }}.
+      Check installer output and rerun: sudo labstrap extras herdr
+  when: herdr_command_path.rc != 0 or (herdr_command_path.stdout | trim) == ''

@@ -1,4 +1,4 @@
-user: lab
+user: auto
 
 ssh:
   port: 22222
@@ -16,26 +16,28 @@ tailscale:
 
 extras:
   homebrew: true
-  dokploy: true
+  dokploy: false
   zsh: true
   ohmyzsh: true
   starship: true
   yazi: true
-  node: true
+  node: false
   codex: true
   claudecode: true
-  kimi: true
-  camoufox: true
+  kimi: false
+  camoufox: false
   cargo: true
   pm2: true
   pnpm: true
   tcs: true
   tsx: true
   openclaw: true
-  clawvault: true
+  clawvault: false
   bun: true
-  whisper: true
-  rbw: true
+  whisper: false
+  rbw: false
+  llamacpp: true
+  herdr: true
   dotfiles: true
 
 dokploy:

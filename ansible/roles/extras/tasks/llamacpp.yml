@@ -1,0 +1,92 @@
+---
+- name: Check user Homebrew binary for llamacpp install
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.linuxbrew/bin/brew"
+  register: llamacpp_user_brew_binary
+
+- name: Check global Homebrew binary for llamacpp install
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/brew
+  register: llamacpp_global_brew_binary
+
+- name: Select Homebrew binary for llamacpp install
+  ansible.builtin.set_fact:
+    llamacpp_brew_bin: >-
+      {{ labstrap_user_home + '/.linuxbrew/bin/brew'
+         if llamacpp_user_brew_binary.stat.exists else
+         ('/home/linuxbrew/.linuxbrew/bin/brew'
+          if llamacpp_global_brew_binary.stat.exists else '') }}
+
+- name: Fail if Homebrew is missing for llamacpp component
+  ansible.builtin.fail:
+    msg: "Homebrew is required for llamacpp. Run 'labstrap extras homebrew' first."
+  when: llamacpp_brew_bin == ''
+
+- name: Install llama.cpp via Homebrew
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if "{{ llamacpp_brew_bin }}" list --versions llama.cpp >/dev/null; then
+      echo "present"
+    else
+      "{{ llamacpp_brew_bin }}" install llama.cpp
+      echo "installed"
+    fi
+  args:
+    executable: /bin/bash
+  register: llamacpp_install
+  changed_when: "'installed' in llamacpp_install.stdout"
+  become_user: "{{ user }}"
+  environment:
+    HOME: "{{ labstrap_user_home }}"
+
+- name: Ensure local user bin directory exists for llamacpp wrapper
+  ansible.builtin.file:
+    path: "{{ labstrap_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+
+- name: Ensure local user bin path is exported for llamacpp
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
+
+- name: Ensure llama-cli wrapper exists in local user bin
+  ansible.builtin.copy:
+    dest: "{{ labstrap_user_home }}/.local/bin/llama-cli"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      if [ -x "$HOME/.linuxbrew/bin/llama-cli" ]; then
+        exec "$HOME/.linuxbrew/bin/llama-cli" "$@"
+      fi
+      exec "/home/linuxbrew/.linuxbrew/bin/llama-cli" "$@"
+
+- name: Verify user llama.cpp binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.linuxbrew/bin/llama-cli"
+  register: llamacpp_user_binary
+
+- name: Verify shared llama.cpp binary exists
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/llama-cli
+  register: llamacpp_shared_binary
+
+- name: Fail when llama.cpp binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      llama.cpp installation finished without producing llama-cli under {{ labstrap_user_home }}/.linuxbrew/bin or /home/linuxbrew/.linuxbrew/bin.
+      Rerun: sudo labstrap extras llamacpp
+  when: not llamacpp_user_binary.stat.exists and not llamacpp_shared_binary.stat.exists

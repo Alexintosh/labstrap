@@ -18,6 +18,20 @@
   environment:
     HOME: "{{ labstrap_user_home }}"
 
+- name: Ensure local user bin path is exported for starship
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"
+
 - name: Enable starship in .zshrc
   ansible.builtin.lineinfile:
     path: "{{ labstrap_user_home }}/.zshrc"
@@ -27,3 +41,25 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: "0644"
+
+- name: Enable starship in .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.bashrc"
+    line: 'eval "$(starship init bash)"'
+    state: present
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
+- name: Verify starship binary exists
+  ansible.builtin.stat:
+    path: "{{ labstrap_user_home }}/.local/bin/starship"
+  register: starship_binary
+
+- name: Fail when starship binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      Starship installation finished without producing {{ labstrap_user_home }}/.local/bin/starship.
+      Check installer output and rerun: sudo labstrap extras starship
+  when: not starship_binary.stat.exists

@@ -19,6 +19,32 @@ DEFAULT_CONFIG="$ROOT_DIR/defaults/config.yml"
 CONFIG_PATH="${LABSTRAP_CONFIG:-$DEFAULT_CONFIG}"
 LABSTRAP_LOG_FILE="${LABSTRAP_LOG_FILE:-}"
 LOG_COMMAND=""
+EXTRAS_COMPONENTS=(
+  homebrew
+  dokploy
+  zsh
+  ohmyzsh
+  starship
+  yazi
+  node
+  codex
+  claudecode
+  kimi
+  camoufox
+  cargo
+  pm2
+  pnpm
+  tcs
+  tsx
+  openclaw
+  clawvault
+  bun
+  whisper
+  rbw
+  llamacpp
+  herdr
+  dotfiles
+)
 
 json_escape() {
   local value="${1:-}"
@@ -71,7 +97,7 @@ suggest_failure_hint() {
   local detail="$3"
   local user_name
   user_name="$(config_value user 2>/dev/null || true)"
-  [[ -n "$user_name" ]] || user_name="lab"
+  [[ -n "$user_name" ]] || user_name="<configured-user>"
 
   if [[ "$phase" == "harden" && "$task" == *"Ensure at least one SSH key exists"* ]]; then
     echo "No SSH key found for user '$user_name'. Run: sudo labstrap allow-key /path/to/key.pub ; then rerun: sudo labstrap harden"
@@ -155,6 +181,16 @@ suggest_failure_hint() {
 
   if [[ "$detail" == *"rbw installation finished without producing"* ]]; then
     echo "rbw install failed. Run: sudo labstrap extras homebrew && sudo labstrap extras rbw"
+    return
+  fi
+
+  if [[ "$detail" == *"llama.cpp installation finished without producing"* ]]; then
+    echo "llama.cpp install failed. Run: sudo labstrap extras homebrew && sudo labstrap extras llamacpp"
+    return
+  fi
+
+  if [[ "$detail" == *"Herdr installation finished without producing"* ]]; then
+    echo "Herdr install failed. Run: sudo labstrap extras herdr"
     return
   fi
 
@@ -351,7 +387,7 @@ print_usage() {
 Usage:
   labstrap init
   labstrap harden
-  labstrap extras [component|all]
+  labstrap extras [component|all|--interactive|select]
   labstrap allow-key <path_to_pubkey>
   labstrap doctor [--fix]
   labstrap status
@@ -382,7 +418,73 @@ require_command() {
 
 config_value() {
   local key="$1"
-  awk -v key="$key" '$1 == key":" {print $2; exit}' "$CONFIG_PATH"
+  local value
+  value="$(awk -v key="$key" '$1 == key":" {print $2; exit}' "$CONFIG_PATH")"
+
+  if [[ "$key" == "user" && ( -z "$value" || "$value" == "auto" ) ]]; then
+    detect_target_user
+    return
+  fi
+
+  printf '%s\n' "$value"
+}
+
+detect_target_user() {
+  local candidate
+
+  if [[ -n "${LABSTRAP_USER:-}" && "${LABSTRAP_USER:-}" != "root" ]]; then
+    printf '%s\n' "$LABSTRAP_USER"
+    return
+  fi
+
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+    printf '%s\n' "$SUDO_USER"
+    return
+  fi
+
+  candidate="$(logname 2>/dev/null || true)"
+  if [[ -n "$candidate" && "$candidate" != "root" ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  candidate="$(awk -F: '$3 >= 1000 && $3 < 65534 && $1 != "nobody" {print $1; exit}' /etc/passwd)"
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  return 1
+}
+
+target_user_shell() {
+  local user_name="$1"
+  local shell_path
+
+  shell_path="$(getent passwd "$user_name" 2>/dev/null | cut -d: -f7)"
+  if [[ -n "$shell_path" && -x "$shell_path" ]]; then
+    printf '%s\n' "$shell_path"
+    return
+  fi
+
+  printf '%s\n' /bin/bash
+}
+
+user_shell_command_available() {
+  local user_name="$1"
+  local user_home="$2"
+  local shell_path="$3"
+  local command_name="$4"
+
+  if [[ "$EUID" -eq 0 ]]; then
+    sudo -u "$user_name" \
+      env HOME="$user_home" USER="$user_name" LOGNAME="$user_name" SHELL="$shell_path" \
+      "$shell_path" -ic "command -v $command_name >/dev/null 2>&1"
+    return
+  fi
+
+  HOME="$user_home" USER="$user_name" LOGNAME="$user_name" SHELL="$shell_path" \
+    "$shell_path" -ic "command -v $command_name >/dev/null 2>&1"
 }
 
 config_nested_value() {
@@ -393,6 +495,322 @@ config_nested_value() {
     in_section && $0 ~ "^[^[:space:]]" {in_section=0}
     in_section && $1 == key":" {print $2; exit}
   ' "$CONFIG_PATH"
+}
+
+is_valid_extra_component() {
+  local component="$1"
+  local candidate
+
+  [[ "$component" == "all" ]] && return 0
+
+  for candidate in "${EXTRAS_COMPONENTS[@]}"; do
+    [[ "$candidate" == "$component" ]] && return 0
+  done
+
+  return 1
+}
+
+csv_has_component() {
+  local csv="${1:-}"
+  local target="$2"
+  local item
+
+  [[ -n "$csv" ]] || return 1
+  IFS=',' read -r -a __labstrap_csv_items <<< "$csv"
+  for item in "${__labstrap_csv_items[@]}"; do
+    [[ "$item" == "$target" ]] && return 0
+  done
+
+  return 1
+}
+
+normalize_extras_csv() {
+  local csv="${1:-}"
+  local component
+  local selected=()
+
+  for component in "${EXTRAS_COMPONENTS[@]}"; do
+    if csv_has_component "$csv" "$component"; then
+      selected+=("$component")
+    fi
+  done
+
+  local IFS=','
+  printf '%s\n' "${selected[*]}"
+}
+
+toggle_component_in_csv() {
+  local csv="${1:-}"
+  local target="$2"
+  local component
+  local selected=()
+
+  for component in "${EXTRAS_COMPONENTS[@]}"; do
+    if [[ "$component" == "$target" ]]; then
+      if ! csv_has_component "$csv" "$component"; then
+        selected+=("$component")
+      fi
+      continue
+    fi
+
+    if csv_has_component "$csv" "$component"; then
+      selected+=("$component")
+    fi
+  done
+
+  local IFS=','
+  printf '%s\n' "${selected[*]}"
+}
+
+current_extras_selection_csv() {
+  local component
+  local selected=()
+
+  for component in "${EXTRAS_COMPONENTS[@]}"; do
+    if [[ "$(config_nested_value extras "$component")" == "true" ]]; then
+      selected+=("$component")
+    fi
+  done
+
+  local IFS=','
+  printf '%s\n' "${selected[*]}"
+}
+
+select_extras_with_whiptail() {
+  local initial_csv="$1"
+  local component
+  local state
+  local output
+  local args=(
+    --title "labstrap extras"
+    --checklist
+    "Select extras to keep enabled and/or run now."
+    24
+    78
+    16
+  )
+
+  for component in "${EXTRAS_COMPONENTS[@]}"; do
+    state="OFF"
+    if csv_has_component "$initial_csv" "$component"; then
+      state="ON"
+    fi
+    args+=("$component" "$component" "$state")
+  done
+
+  output="$(whiptail --separate-output "${args[@]}" 3>&1 1>&2 2>&3)" || return 1
+  if [[ -z "$output" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  printf '%s\n' "$output" | paste -sd, -
+}
+
+select_extras_with_prompt() {
+  local current_csv="$1"
+  local input
+  local token
+  local index
+  local component
+
+  while true; do
+    echo
+    echo "Select extras to keep enabled and/or run now."
+    for index in "${!EXTRAS_COMPONENTS[@]}"; do
+      component="${EXTRAS_COMPONENTS[$index]}"
+      if csv_has_component "$current_csv" "$component"; then
+        printf '%2d. [x] %s\n' "$((index + 1))" "$component"
+      else
+        printf '%2d. [ ] %s\n' "$((index + 1))" "$component"
+      fi
+    done
+
+    read -r -p "Numbers to toggle (space or comma separated). Press Enter when finished: " input || return 1
+    [[ -z "$input" ]] && break
+    input="${input//,/ }"
+
+    for token in $input; do
+      if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+        echo "Ignoring invalid selection: $token" >&2
+        continue
+      fi
+
+      if (( token < 1 || token > ${#EXTRAS_COMPONENTS[@]} )); then
+        echo "Ignoring out-of-range selection: $token" >&2
+        continue
+      fi
+
+      component="${EXTRAS_COMPONENTS[$((token - 1))]}"
+      current_csv="$(toggle_component_in_csv "$current_csv" "$component")"
+    done
+  done
+
+  printf '%s\n' "$current_csv"
+}
+
+select_extras_interactively() {
+  local initial_csv="$1"
+
+  if command -v whiptail >/dev/null 2>&1; then
+    select_extras_with_whiptail "$initial_csv"
+    return
+  fi
+
+  select_extras_with_prompt "$initial_csv"
+}
+
+choose_extras_action() {
+  local choice
+
+  if command -v whiptail >/dev/null 2>&1; then
+    choice="$(whiptail \
+      --title "labstrap extras" \
+      --menu "Choose what to do with the selected extras." \
+      18 78 4 \
+      run "Run selected extras now" \
+      save "Save selected extras to config" \
+      save_run "Save selected extras, then run them" \
+      cancel "Exit without changes" \
+      3>&1 1>&2 2>&3)" || return 1
+    printf '%s\n' "$choice"
+    return
+  fi
+
+  while true; do
+    echo
+    echo "Choose what to do next:"
+    echo "  1. Run selected extras now"
+    echo "  2. Save selected extras to config"
+    echo "  3. Save selected extras, then run them"
+    echo "  4. Cancel"
+    read -r -p "Action [1-4]: " choice || return 1
+
+    case "$choice" in
+      1) printf 'run\n'; return ;;
+      2) printf 'save\n'; return ;;
+      3) printf 'save_run\n'; return ;;
+      4) printf 'cancel\n'; return ;;
+    esac
+
+    echo "Invalid action: $choice" >&2
+  done
+}
+
+save_extras_selection() {
+  local selected_csv="$1"
+  local components_csv
+  local tmp_file
+
+  components_csv="$(normalize_extras_csv "$(IFS=,; printf '%s' "${EXTRAS_COMPONENTS[*]}")")"
+  tmp_file="$(mktemp /tmp/labstrap-config.XXXXXX)"
+
+  awk \
+    -v selected_csv="$selected_csv" \
+    -v components_csv="$components_csv" '
+      BEGIN {
+        selected_count = split(selected_csv, selected, ",")
+        for (i = 1; i <= selected_count; i++) {
+          if (selected[i] != "") {
+            selected_map[selected[i]] = 1
+          }
+        }
+
+        component_count = split(components_csv, components, ",")
+        for (i = 1; i <= component_count; i++) {
+          if (components[i] != "") {
+            component_map[components[i]] = 1
+          }
+        }
+      }
+
+      /^extras:[[:space:]]*$/ {
+        print
+        in_extras = 1
+        next
+      }
+
+      in_extras && /^[^[:space:]]/ {
+        in_extras = 0
+      }
+
+      in_extras {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        split(line, parts, ":")
+        key = parts[1]
+
+        if (key in component_map) {
+          printf "  %s: %s\n", key, ((key in selected_map) ? "true" : "false")
+          next
+        }
+      }
+
+      {
+        print
+      }
+    ' "$CONFIG_PATH" > "$tmp_file"
+
+  chmod 0644 "$tmp_file"
+  mv "$tmp_file" "$CONFIG_PATH"
+}
+
+run_extras_interactive() {
+  local initial_csv
+  local selected_csv
+  local action
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    log_event "ERROR" "extras.interactive.no_tty" "Interactive extras mode requires a TTY"
+    echo "ERROR: Interactive extras mode requires a TTY." >&2
+    return 1
+  fi
+
+  initial_csv="$(current_extras_selection_csv)"
+  selected_csv="$(select_extras_interactively "$initial_csv")" || {
+    log_event "INFO" "extras.interactive.cancelled" "Interactive extras selection cancelled"
+    echo "extras: cancelled."
+    return 0
+  }
+  selected_csv="$(normalize_extras_csv "$selected_csv")"
+
+  action="$(choose_extras_action)" || {
+    log_event "INFO" "extras.interactive.cancelled" "Interactive extras action cancelled"
+    echo "extras: cancelled."
+    return 0
+  }
+
+  case "$action" in
+    run)
+      banner "Phase 3: extras (selected)"
+      run_preflight extras
+      run_ansible_phase extras all "$selected_csv"
+      ;;
+
+    save)
+      save_extras_selection "$selected_csv"
+      log_event "INFO" "extras.selection.saved" "Saved interactive extras selection" "selected" "$selected_csv"
+      echo "extras: saved selection to $CONFIG_PATH"
+      ;;
+
+    save_run)
+      save_extras_selection "$selected_csv"
+      log_event "INFO" "extras.selection.saved" "Saved interactive extras selection" "selected" "$selected_csv"
+      banner "Phase 3: extras (selected)"
+      run_preflight extras
+      run_ansible_phase extras all "$selected_csv"
+      ;;
+
+    cancel)
+      log_event "INFO" "extras.interactive.cancelled" "Interactive extras action cancelled"
+      echo "extras: cancelled."
+      ;;
+
+    *)
+      echo "ERROR: Unknown extras action '$action'." >&2
+      return 1
+      ;;
+  esac
 }
 
 run_preflight() {
@@ -420,11 +838,17 @@ run_ansible_phase() {
     "$ANSIBLE_DIR/playbook.yml"
     -e "labstrap_action=$action"
     -e "@$CONFIG_PATH"
+    -e "user=$(config_value user)"
   )
 
   if [[ "$action" == "extras" ]]; then
     local component="${1:-all}"
     args+=( -e "extras_component=$component" )
+    if [[ "$#" -ge 2 ]]; then
+      local selected_csv="$2"
+      args+=( -e "extras_selection_override=true" )
+      args+=( -e "extras_selected_csv=$selected_csv" )
+    fi
   fi
 
   if ANSIBLE_CALLBACK_PLUGINS="$ANSIBLE_DIR/callback_plugins${ANSIBLE_CALLBACK_PLUGINS:+:$ANSIBLE_CALLBACK_PLUGINS}" \
@@ -520,6 +944,24 @@ status_check() {
   return 1
 }
 
+status_check_user_command() {
+  local label="$1"
+  local user_name="$2"
+  local user_home="$3"
+  local shell_path="$4"
+  local command_name="$5"
+
+  if user_shell_command_available "$user_name" "$user_home" "$shell_path" "$command_name"; then
+    log_event "INFO" "status.check" "Status check passed" "check" "$label" "result" "PASS"
+    echo "[PASS] $label"
+    return 0
+  fi
+
+  log_event "ERROR" "status.check" "Status check failed" "check" "$label" "result" "FAIL"
+  echo "[FAIL] $label"
+  return 1
+}
+
 doctor_record() {
   local level="$1"
   local label="$2"
@@ -549,6 +991,7 @@ run_doctor() {
   local fix_mode="${1:-0}"
   local user_name=""
   local user_home=""
+  local user_shell=""
   local fail_count=0
   local warn_count=0
   local pass_count=0
@@ -576,6 +1019,7 @@ run_doctor() {
     fail_count=$((fail_count + 1))
   elif id "$user_name" >/dev/null 2>&1; then
     user_home="$(getent passwd "$user_name" | cut -d: -f6)"
+    user_shell="$(target_user_shell "$user_name")"
     doctor_record "PASS" "provisioning user exists" "$user_name"
     pass_count=$((pass_count + 1))
   else
@@ -699,7 +1143,7 @@ run_doctor() {
 
   if [[ -n "$user_home" ]]; then
     if [[ "$(config_nested_value extras claudecode)" == "true" ]]; then
-      if [[ -x "$user_home/.npm-global/bin/claude" || -x "$user_home/.local/bin/claude" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" claude; then
         doctor_record "PASS" "extra claudecode installed"
         pass_count=$((pass_count + 1))
       else
@@ -709,7 +1153,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras kimi)" == "true" ]]; then
-      if [[ -x "$user_home/.local/bin/kimi" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" kimi; then
         doctor_record "PASS" "extra kimi installed"
         pass_count=$((pass_count + 1))
       else
@@ -719,7 +1163,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras camoufox)" == "true" ]]; then
-      if [[ -x "$user_home/.local/bin/camoufox" && -x "$user_home/.venvs/camoufox/bin/python" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" camoufox; then
         doctor_record "PASS" "extra camoufox installed"
         pass_count=$((pass_count + 1))
       else
@@ -729,7 +1173,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras cargo)" == "true" ]]; then
-      if [[ -x "$user_home/.cargo/bin/cargo" || -x "$user_home/.local/bin/cargo" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" cargo; then
         doctor_record "PASS" "extra cargo installed"
         pass_count=$((pass_count + 1))
       else
@@ -739,7 +1183,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras tsx)" == "true" ]]; then
-      if [[ -x "$user_home/.npm-global/bin/tsx" || -x "$user_home/.local/bin/tsx" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" tsx; then
         doctor_record "PASS" "extra tsx installed"
         pass_count=$((pass_count + 1))
       else
@@ -749,7 +1193,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras openclaw)" == "true" ]]; then
-      if [[ -x "$user_home/.openclaw/bin/openclaw" || -x "$user_home/.npm-global/bin/openclaw" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" openclaw; then
         doctor_record "PASS" "extra openclaw installed"
         pass_count=$((pass_count + 1))
       else
@@ -759,7 +1203,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras bun)" == "true" ]]; then
-      if [[ -x "$user_home/.bun/bin/bun" || -x "$user_home/.local/bin/bun" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" bun; then
         doctor_record "PASS" "extra bun installed"
         pass_count=$((pass_count + 1))
       else
@@ -769,7 +1213,7 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras whisper)" == "true" ]]; then
-      if [[ -x "$user_home/.venvs/whisper/bin/whisper" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" whisper; then
         doctor_record "PASS" "extra whisper installed"
         pass_count=$((pass_count + 1))
       else
@@ -779,11 +1223,31 @@ run_doctor() {
     fi
 
     if [[ "$(config_nested_value extras rbw)" == "true" ]]; then
-      if [[ -x "$user_home/.linuxbrew/bin/rbw" || -x "/home/linuxbrew/.linuxbrew/bin/rbw" || -x "$user_home/.local/bin/rbw" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" rbw; then
         doctor_record "PASS" "extra rbw installed"
         pass_count=$((pass_count + 1))
       else
         doctor_record "FAIL" "extra rbw installed" "run: sudo labstrap extras rbw"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras llamacpp)" == "true" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" llama-cli; then
+        doctor_record "PASS" "extra llamacpp installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra llamacpp installed" "run: sudo labstrap extras llamacpp"
+        fail_count=$((fail_count + 1))
+      fi
+    fi
+
+    if [[ "$(config_nested_value extras herdr)" == "true" ]]; then
+      if user_shell_command_available "$user_name" "$user_home" "$user_shell" herdr; then
+        doctor_record "PASS" "extra herdr installed"
+        pass_count=$((pass_count + 1))
+      else
+        doctor_record "FAIL" "extra herdr installed" "run: sudo labstrap extras herdr"
         fail_count=$((fail_count + 1))
       fi
     fi
@@ -808,6 +1272,7 @@ run_doctor() {
 run_status() {
   local user_name
   local user_home
+  local user_shell
   local user_home_q
   local ssh_port
   local extras_homebrew
@@ -830,10 +1295,13 @@ run_status() {
   local extras_bun
   local extras_whisper
   local extras_rbw
+  local extras_llamacpp
+  local extras_herdr
   local failures=0
 
   user_name="$(config_value user)"
   user_home="$(getent passwd "$user_name" 2>/dev/null | cut -d: -f6)"
+  user_shell="$(target_user_shell "$user_name")"
   [[ -n "$user_home" ]] || user_home="/home/$user_name"
   printf -v user_home_q "%q" "$user_home"
   ssh_port="$(config_nested_value ssh port)"
@@ -857,6 +1325,8 @@ run_status() {
   extras_bun="$(config_nested_value extras bun)"
   extras_whisper="$(config_nested_value extras whisper)"
   extras_rbw="$(config_nested_value extras rbw)"
+  extras_llamacpp="$(config_nested_value extras llamacpp)"
+  extras_herdr="$(config_nested_value extras herdr)"
 
   [[ -n "$ssh_port" ]] || ssh_port="22222"
 
@@ -950,6 +1420,14 @@ run_status() {
     status_check "Extra: rbw installed" "[[ -x $user_home_q/.linuxbrew/bin/rbw || -x /home/linuxbrew/.linuxbrew/bin/rbw || -x $user_home_q/.local/bin/rbw ]]" || failures=$((failures + 1))
   fi
 
+  if [[ "$extras_llamacpp" == "true" ]]; then
+    status_check "Extra: llamacpp installed" "[[ -x $user_home_q/.linuxbrew/bin/llama-cli || -x /home/linuxbrew/.linuxbrew/bin/llama-cli || -x $user_home_q/.local/bin/llama-cli ]]" || failures=$((failures + 1))
+  fi
+
+  if [[ "$extras_herdr" == "true" ]]; then
+    status_check_user_command "Extra: herdr installed" "$user_name" "$user_home" "$user_shell" herdr || failures=$((failures + 1))
+  fi
+
   echo
   if [[ "$failures" -eq 0 ]]; then
     echo "status: OK"
@@ -989,19 +1467,33 @@ main() {
 
     extras)
       require_root
-      local component="${2:-all}"
-      case "$component" in
-        all|homebrew|dokploy|zsh|ohmyzsh|starship|yazi|node|codex|claudecode|kimi|camoufox|cargo|pm2|pnpm|tcs|tsx|openclaw|clawvault|bun|whisper|rbw|dotfiles) ;;
-        *)
-          echo "ERROR: Invalid extras component '$component'." >&2
-          print_usage
-          exit 1
-          ;;
-      esac
+      local component="${2:-}"
+      if [[ -z "$component" ]]; then
+        if [[ -t 0 && -t 1 ]]; then
+          run_extras_interactive
+        else
+          banner "Phase 3: extras (all)"
+          run_preflight extras
+          run_ansible_phase extras all
+        fi
+      else
+        case "$component" in
+          --interactive|select)
+            run_extras_interactive
+            ;;
+          *)
+            if ! is_valid_extra_component "$component"; then
+              echo "ERROR: Invalid extras component '$component'." >&2
+              print_usage
+              exit 1
+            fi
 
-      banner "Phase 3: extras ($component)"
-      run_preflight extras
-      run_ansible_phase extras "$component"
+            banner "Phase 3: extras ($component)"
+            run_preflight extras
+            run_ansible_phase extras "$component"
+            ;;
+        esac
+      fi
       ;;
 
     allow-key)

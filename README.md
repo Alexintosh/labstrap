@@ -74,7 +74,7 @@ Homebrew installer mode override (optional):
 ```bash
 labstrap init
 labstrap harden
-labstrap extras [component|all]
+labstrap extras [component|all|--interactive|select]
 labstrap allow-key <path_to_pubkey>
 labstrap doctor [--fix]
 labstrap status
@@ -96,6 +96,20 @@ Set `LABSTRAP_LOG_DIR` to override the log directory.
 
 ### `harden`
 
+Before running `harden`, add at least one SSH public key for the target user:
+
+```bash
+sudo LABSTRAP_USER="$(logname)" labstrap allow-key /path/to/key.pub
+sudo LABSTRAP_USER="$(logname)" labstrap harden
+```
+
+Use an explicit username instead of `$(logname)` when running from a root-only session:
+
+```bash
+sudo LABSTRAP_USER=alexintosh labstrap allow-key /path/to/key.pub
+sudo LABSTRAP_USER=alexintosh labstrap harden
+```
+
 Execution order is enforced:
 
 1. Ensure SSH key(s) exist
@@ -107,6 +121,8 @@ Execution order is enforced:
 7. Restart SSH
 8. Verify service/listener/firewall state
 9. Disable root SSH login
+
+On systems using socket-activated OpenSSH, `harden` reconciles `ssh.socket` as part of the listener restart and verification path.
 
 ### `extras`
 
@@ -133,11 +149,25 @@ Supported components:
 - `bun`
 - `whisper`
 - `rbw`
+- `llamacpp`
+- `herdr`
 - `dotfiles`
 - `all`
 
 Each component is independently idempotent.
 `extras all` attempts every enabled component and reports a consolidated failure summary at the end if any component fails.
+Running `labstrap extras` with no component on an interactive TTY opens a selector so you can enable, disable, save, and run a chosen set of extras.
+`labstrap extras --interactive` and `labstrap extras select` open the same selector explicitly.
+The `llamacpp` component installs the Homebrew `llama.cpp` formula and verifies that `llama-cli` is available.
+The `herdr` component runs the upstream installer and verifies that `herdr` is available in the target user's shell.
+
+Examples:
+
+```bash
+sudo LABSTRAP_USER="$(logname)" labstrap extras llamacpp
+sudo LABSTRAP_USER="$(logname)" labstrap extras herdr
+sudo LABSTRAP_USER="$(logname)" labstrap extras --interactive
+```
 
 `tcs` installs TypeScript and provides a `tcs` wrapper that delegates to `tsc`.
 `codex`, `claudecode`, `pm2`, `pnpm`, `tcs`, `tsx`, and `clawvault` depend on the `node` component.
@@ -167,7 +197,7 @@ Checks common failure causes before/during provisioning:
 - Invalid `sshd_config` or missing `/run/sshd`
 - npm/nvm incompatibilities in `~/.npmrc` (`prefix`/`globalconfig`)
 - Linuxbrew path ownership/writability for Homebrew installs
-- Selected extras presence checks (`claudecode`, `kimi`, `camoufox`, `cargo`, `tsx`, `openclaw`, `bun`, `whisper`, `rbw`)
+- Selected extras presence checks (`claudecode`, `kimi`, `camoufox`, `cargo`, `tsx`, `openclaw`, `bun`, `whisper`, `rbw`, `llamacpp`, `herdr`)
 
 Use auto-fix mode for safe remediations:
 
@@ -184,6 +214,10 @@ Default config lives at:
 
 Override path at runtime by setting `LABSTRAP_CONFIG`.
 
+The default `user: auto` resolves to the target local user at runtime. Resolution order is:
+`LABSTRAP_USER`, `SUDO_USER`, `logname`, then the first normal local account from `/etc/passwd`.
+Set `LABSTRAP_USER` or replace `user: auto` with an explicit username when bootstrapping from a root-only session.
+
 Dokploy version is configurable via `dokploy.version` (default: `latest`).
 OpenClaw version is configurable via `openclaw.version` (default: `latest`).
 
@@ -191,9 +225,10 @@ OpenClaw version is configurable via `openclaw.version` (default: `latest`).
 
 ```bash
 sudo ./install.sh
-sudo labstrap init
-sudo labstrap harden
-sudo labstrap extras all
+sudo LABSTRAP_USER="$(logname)" labstrap init
+sudo LABSTRAP_USER="$(logname)" labstrap allow-key /path/to/key.pub
+sudo LABSTRAP_USER="$(logname)" labstrap harden
+sudo LABSTRAP_USER="$(logname)" labstrap extras all
 sudo reboot
 ```
 

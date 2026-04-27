@@ -30,6 +30,11 @@
     group: "{{ user }}"
     mode: "0644"
     force: true
+    timeout: 30
+  register: dotfiles_zshrc_fetch
+  retries: 3
+  delay: 2
+  until: dotfiles_zshrc_fetch is succeeded
 
 - name: Ensure .zshrc ownership remains user-owned
   ansible.builtin.file:

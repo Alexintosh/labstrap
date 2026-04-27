@@ -1,5 +1,11 @@
 ---
 - name: restart ssh
-  ansible.builtin.shell: "systemctl restart ssh || systemctl restart sshd"
+  ansible.builtin.shell: |
+    set -e
+    systemctl daemon-reload
+    if systemctl list-unit-files ssh.socket --no-legend 2>/dev/null | awk '{print $1}' | grep -qx 'ssh.socket'; then
+      systemctl restart ssh.socket
+    fi
+    systemctl restart ssh || systemctl restart sshd
   args:
     executable: /bin/bash

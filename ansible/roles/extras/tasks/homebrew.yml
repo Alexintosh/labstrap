@@ -110,3 +110,22 @@
       elif [ -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
       fi
+
+- name: Ensure Homebrew shellenv is loaded in user shell rc files
+  ansible.builtin.blockinfile:
+    path: "{{ item }}"
+    marker: "# {mark} labstrap homebrew shellenv"
+    block: |
+      if [ -x "$HOME/.linuxbrew/bin/brew" ]; then
+        eval "$("$HOME/.linuxbrew/bin/brew" shellenv)"
+      elif [ -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      fi
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+  loop:
+    - "{{ labstrap_user_home }}/.zshrc"
+    - "{{ labstrap_user_home }}/.bashrc"
+    - "{{ labstrap_user_home }}/.profile"

@@ -34,11 +34,22 @@
     line: '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
     state: present
 
+- name: Remove npm prefix/globalconfig overrides incompatible with nvm before Node install
+  ansible.builtin.lineinfile:
+    path: "{{ labstrap_user_home }}/.npmrc"
+    regexp: '^\s*(prefix|globalconfig)\s*=.*$'
+    state: absent
+    create: true
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: "0644"
+
 - name: Install Node LTS and set default alias
   ansible.builtin.shell: |
     set -euo pipefail
     export NVM_DIR="${HOME}/.nvm"
     . "${NVM_DIR}/nvm.sh"
+    nvm use --delete-prefix --silent >/dev/null 2>&1 || true
     nvm install --lts
     nvm alias default 'lts/*'
   args:

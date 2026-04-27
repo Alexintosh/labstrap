@@ -24,7 +24,46 @@
       - bun
       - whisper
       - rbw
+      - llamacpp
+      - herdr
       - dotfiles
+    selectable_extras_components:
+      - homebrew
+      - dokploy
+      - zsh
+      - ohmyzsh
+      - starship
+      - yazi
+      - node
+      - codex
+      - claudecode
+      - kimi
+      - camoufox
+      - cargo
+      - pm2
+      - pnpm
+      - tcs
+      - tsx
+      - openclaw
+      - clawvault
+      - bun
+      - whisper
+      - rbw
+      - llamacpp
+      - herdr
+      - dotfiles
+    node_dependent_extras_components:
+      - codex
+      - claudecode
+      - pm2
+      - pnpm
+      - tcs
+      - tsx
+      - clawvault
+    homebrew_dependent_extras_components:
+      - yazi
+      - rbw
+      - llamacpp
 
 - name: Resolve provisioning user home directory for extras
   ansible.builtin.command: "getent passwd {{ user }}"
@@ -42,6 +81,60 @@
       - extras_component in valid_extras_components
     fail_msg: "Invalid extras component '{{ extras_component }}'."
 
+- name: Parse interactive extras selection override
+  ansible.builtin.set_fact:
+    extras_selection_override: "{{ extras_selection_override | default(false) | bool }}"
+    extras_selected_list: >-
+      {{
+        (extras_selected_csv | default('', true) | trim)
+        | split(',')
+        | map('trim')
+        | reject('equalto', '')
+        | list
+      }}
+
+- name: Validate interactive extras selection override
+  ansible.builtin.assert:
+    that:
+      - extras_selected_list | difference(selectable_extras_components) | length == 0
+    fail_msg: "Invalid interactive extras selection '{{ extras_selected_list | to_json }}'."
+  when: extras_selection_override
+
+- name: Resolve raw extras selection for this run
+  ansible.builtin.set_fact:
+    extras_effective_selected_raw: >-
+      {{
+        extras_selected_list
+        if extras_selection_override
+        else (
+          (extras | dict2items
+           | selectattr('value', 'equalto', true)
+           | map(attribute='key')
+           | list)
+          if extras_component == 'all'
+          else ([extras_component] if (extras[extras_component] | default(false) | bool) else [])
+        )
+      }}
+
+- name: Expand effective extras selection with required dependencies
+  ansible.builtin.set_fact:
+    extras_effective_selected: >-
+      {{
+        (
+          extras_effective_selected_raw
+          + (
+            ['node']
+            if (extras_effective_selected_raw | intersect(node_dependent_extras_components) | length > 0)
+            else []
+          )
+          + (
+            ['homebrew']
+            if (extras_effective_selected_raw | intersect(homebrew_dependent_extras_components) | length > 0)
+            else []
+          )
+        ) | unique
+      }}
+
 - name: Initialize extras component result trackers
   ansible.builtin.set_fact:
     extras_failed_components: []
@@ -52,8 +145,7 @@
     extras_component_name: homebrew
     extras_component_task_file: homebrew.yml
   when:
-    - extras.homebrew | bool
-    - extras_component in ['all', 'homebrew']
+    - extras_component_name in extras_effective_selected
 
 - name: Run zsh component
   ansible.builtin.include_tasks: run_component.yml
@@ -61,8 +153,7 @@
     extras_component_name: zsh
     extras_component_task_file: zsh.yml
   when:
-    - extras.zsh | bool
-    - extras_component in ['all', 'zsh']
+    - extras_component_name in extras_effective_selected
 
 - name: Run dokploy component
   ansible.builtin.include_tasks: run_component.yml
@@ -70,8 +161,7 @@
     extras_component_name: dokploy
     extras_component_task_file: dokploy.yml
   when:
-    - extras.dokploy | bool
-    - extras_component in ['all', 'dokploy']
+    - extras_component_name in extras_effective_selected
 
 - name: Run Oh My Zsh component
   ansible.builtin.include_tasks: run_component.yml
@@ -79,8 +169,7 @@
     extras_component_name: ohmyzsh
     extras_component_task_file: ohmyzsh.yml
   when:
-    - extras.ohmyzsh | bool
-    - extras_component in ['all', 'ohmyzsh']
+    - extras_component_name in extras_effective_selected
 
 - name: Run dotfiles component
   ansible.builtin.include_tasks: run_component.yml
@@ -88,8 +177,7 @@
     extras_component_name: dotfiles
     extras_component_task_file: dotfiles.yml
   when:
-    - extras.dotfiles | bool
-    - extras_component in ['all', 'dotfiles']
+    - extras_component_name in extras_effective_selected
 
 - name: Run starship component
   ansible.builtin.include_tasks: run_component.yml
@@ -97,8 +185,7 @@
     extras_component_name: starship
     extras_component_task_file: starship.yml
   when:
-    - extras.starship | bool
-    - extras_component in ['all', 'starship']
+    - extras_component_name in extras_effective_selected
 
 - name: Run yazi component
   ansible.builtin.include_tasks: run_component.yml
@@ -106,8 +193,7 @@
     extras_component_name: yazi
     extras_component_task_file: yazi.yml
   when:
-    - extras.yazi | bool
-    - extras_component in ['all', 'yazi']
+    - extras_component_name in extras_effective_selected
 
 - name: Run node component
   ansible.builtin.include_tasks: run_component.yml
@@ -115,8 +201,7 @@
     extras_component_name: node
     extras_component_task_file: node.yml
   when:
-    - extras.node | bool
-    - extras_component in ['all', 'node']
+    - extras_component_name in extras_effective_selected
 
 - name: Run codex component
   ansible.builtin.include_tasks: run_component.yml
@@ -124,8 +209,7 @@
     extras_component_name: codex
     extras_component_task_file: codex.yml
   when:
-    - extras.codex | bool
-    - extras_component in ['all', 'codex']
+    - extras_component_name in extras_effective_selected
 
 - name: Run claudecode component
   ansible.builtin.include_tasks: run_component.yml
@@ -133,8 +217,7 @@
     extras_component_name: claudecode
     extras_component_task_file: claudecode.yml
   when:
-    - extras.claudecode | bool
-    - extras_component in ['all', 'claudecode']
+    - extras_component_name in extras_effective_selected
 
 - name: Run kimi component
   ansible.builtin.include_tasks: run_component.yml
@@ -142,8 +225,7 @@
     extras_component_name: kimi
     extras_component_task_file: kimi.yml
   when:
-    - extras.kimi | bool
-    - extras_component in ['all', 'kimi']
+    - extras_component_name in extras_effective_selected
 
 - name: Run cargo component
   ansible.builtin.include_tasks: run_component.yml
@@ -151,8 +233,7 @@
     extras_component_name: cargo
     extras_component_task_file: cargo.yml
   when:
-    - extras.cargo | bool
-    - extras_component in ['all', 'cargo']
+    - extras_component_name in extras_effective_selected
 
 - name: Run camoufox component
   ansible.builtin.include_tasks: run_component.yml
@@ -160,8 +241,7 @@
     extras_component_name: camoufox
     extras_component_task_file: camoufox.yml
   when:
-    - extras.camoufox | bool
-    - extras_component in ['all', 'camoufox']
+    - extras_component_name in extras_effective_selected
 
 - name: Run pm2 component
   ansible.builtin.include_tasks: run_component.yml
@@ -169,8 +249,7 @@
     extras_component_name: pm2
     extras_component_task_file: pm2.yml
   when:
-    - extras.pm2 | bool
-    - extras_component in ['all', 'pm2']
+    - extras_component_name in extras_effective_selected
 
 - name: Run pnpm component
   ansible.builtin.include_tasks: run_component.yml
@@ -178,8 +257,7 @@
     extras_component_name: pnpm
     extras_component_task_file: pnpm.yml
   when:
-    - extras.pnpm | bool
-    - extras_component in ['all', 'pnpm']
+    - extras_component_name in extras_effective_selected
 
 - name: Run tcs component
   ansible.builtin.include_tasks: run_component.yml
@@ -187,8 +265,7 @@
     extras_component_name: tcs
     extras_component_task_file: tcs.yml
   when:
-    - extras.tcs | bool
-    - extras_component in ['all', 'tcs']
+    - extras_component_name in extras_effective_selected
 
 - name: Run tsx component
   ansible.builtin.include_tasks: run_component.yml
@@ -196,8 +273,7 @@
     extras_component_name: tsx
     extras_component_task_file: tsx.yml
   when:
-    - extras.tsx | bool
-    - extras_component in ['all', 'tsx']
+    - extras_component_name in extras_effective_selected
 
 - name: Run openclaw component
   ansible.builtin.include_tasks: run_component.yml
@@ -205,8 +281,7 @@
     extras_component_name: openclaw
     extras_component_task_file: openclaw.yml
   when:
-    - extras.openclaw | bool
-    - extras_component in ['all', 'openclaw']
+    - extras_component_name in extras_effective_selected
 
 - name: Run clawvault component
   ansible.builtin.include_tasks: run_component.yml
@@ -214,8 +289,7 @@
     extras_component_name: clawvault
     extras_component_task_file: clawvault.yml
   when:
-    - extras.clawvault | bool
-    - extras_component in ['all', 'clawvault']
+    - extras_component_name in extras_effective_selected
 
 - name: Run bun component
   ansible.builtin.include_tasks: run_component.yml
@@ -223,8 +297,7 @@
     extras_component_name: bun
     extras_component_task_file: bun.yml
   when:
-    - extras.bun | bool
-    - extras_component in ['all', 'bun']
+    - extras_component_name in extras_effective_selected
 
 - name: Run whisper component
   ansible.builtin.include_tasks: run_component.yml
@@ -232,8 +305,7 @@
     extras_component_name: whisper
     extras_component_task_file: whisper.yml
   when:
-    - extras.whisper | bool
-    - extras_component in ['all', 'whisper']
+    - extras_component_name in extras_effective_selected
 
 - name: Run rbw component
   ansible.builtin.include_tasks: run_component.yml
@@ -241,8 +313,23 @@
     extras_component_name: rbw
     extras_component_task_file: rbw.yml
   when:
-    - extras.rbw | bool
-    - extras_component in ['all', 'rbw']
+    - extras_component_name in extras_effective_selected
+
+- name: Run llamacpp component
+  ansible.builtin.include_tasks: run_component.yml
+  vars:
+    extras_component_name: llamacpp
+    extras_component_task_file: llamacpp.yml
+  when:
+    - extras_component_name in extras_effective_selected
+
+- name: Run herdr component
+  ansible.builtin.include_tasks: run_component.yml
+  vars:
+    extras_component_name: herdr
+    extras_component_task_file: herdr.yml
+  when:
+    - extras_component_name in extras_effective_selected
 
 - name: Fail when one or more extras components failed
   ansible.builtin.fail:

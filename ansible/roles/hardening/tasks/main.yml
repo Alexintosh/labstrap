@@ -243,8 +243,19 @@
 - name: "7. Restart SSH if configuration changed"
   ansible.builtin.meta: flush_handlers
 
-- name: "8. Ensure ssh service is active"
-  ansible.builtin.shell: "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd"
+- name: "7. Reconcile socket-activated SSH listener"
+  ansible.builtin.shell: |
+    set -e
+    if systemctl list-unit-files ssh.socket --no-legend 2>/dev/null | awk '{print $1}' | grep -qx 'ssh.socket'; then
+      systemctl daemon-reload
+      systemctl restart ssh.socket
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: "8. Ensure ssh service or socket is active"
+  ansible.builtin.shell: "systemctl is-active --quiet ssh || systemctl is-active --quiet sshd || systemctl is-active --quiet ssh.socket"
   args:
     executable: /bin/bash
   changed_when: false
@@ -256,6 +267,9 @@
   register: ssh_listener
   changed_when: false
   failed_when: ssh_listener.rc != 0
+  retries: 10
+  delay: 1
+  until: ssh_listener.rc == 0
 
 - name: "8. Verify UFW is active"
   ansible.builtin.command: ufw status
